@@ -1,0 +1,5 @@
+{
+  "enabled": true,
+  "assetPath": "footer-code-injection.js",
+  "notes": "Set enabled=false for emergency kill switch."
+}
