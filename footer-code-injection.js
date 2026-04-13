@@ -2,17 +2,23 @@
   var APP_KEY = "__buildSaverAllInOneV9";
   var app = window[APP_KEY] || (window[APP_KEY] = {});
 
-  if (app.version === "v14" && typeof app.remount === "function") {
+  if (app.version === "v15" && typeof app.remount === "function") {
     app.remount();
     return;
   }
-  app.version = "v14";
+  app.version = "v15";
 
   var CONFIG = {
     ga4: {
       measurementId: "",
       autoLoadTag: true,
       debug: false
+    },
+    serviceArea: {
+      enabled: true,
+      allowedPrefixes: ["M", "L", "N"],
+      helpText: "Service area check uses your delivery postal code.",
+      outOfAreaText: "This postal code may be outside our standard service area. Call us to confirm options."
     },
     quoteConversion: {
       returnParam: "bsv_quote_submitted",
@@ -25,7 +31,9 @@
       product: "",
       source: "",
       page: "",
-      context: "1954630944"
+      context: "1954630944",
+      postal: "",
+      serviceStatus: ""
     },
     trust: [
       { t: "Fast Quote Turnaround", s: "Most requests answered within business hours." },
@@ -201,23 +209,31 @@
   }
 
   function getAnalyticsState() {
+    var svc = getServiceAreaState();
     return {
       measurementId: app.ga4MeasurementId || "",
       analyticsReady: !!app.analyticsReady,
       hasGtag: typeof window.gtag === "function",
       quoteReturnParam: (CONFIG.quoteConversion && CONFIG.quoteConversion.returnParam) || "bsv_quote_submitted",
-      quoteReturnSignal: hasReturnSubmitSignal()
+      quoteReturnSignal: hasReturnSubmitSignal(),
+      serviceAreaEnabled: serviceAreaEnabled(),
+      serviceAreaChecked: !!svc.checked,
+      serviceAreaQualified: !!svc.qualified,
+      serviceAreaFsa: svc.fsa || ""
     };
   }
 
   function markQuoteSubmitted(method, ctx) {
     var payloadCtx = ctx || {};
     var activeCtx = app.quoteContext || {};
+    var svc = getServiceAreaState();
 
     trackEvent("bs_quote_submit", {
       method: method || "unspecified",
       source: payloadCtx.source || activeCtx.source || "Website",
-      product: payloadCtx.product || activeCtx.product || "General"
+      product: payloadCtx.product || activeCtx.product || "General",
+      service_qualified: activeCtx.serviceQualified === true ? "yes" : (activeCtx.serviceQualified === false ? "no" : "unknown"),
+      postal_fsa: svc.fsa || ""
     });
   }
 
@@ -253,19 +269,177 @@
     setSessionFlag(dedupeKey, "1");
   }
 
+  function serviceAreaEnabled() {
+    return !!(CONFIG.serviceArea && CONFIG.serviceArea.enabled);
+  }
+
+  function normalizePostal(raw) {
+    return String(raw || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+  }
+
+  function formatPostal(raw) {
+    var n = normalizePostal(raw);
+    if (n.length <= 3) return n;
+    return n.slice(0, 3) + " " + n.slice(3);
+  }
+
+  function isValidCanadianPostal(n) {
+    return /^[ABCEGHJ-NPRSTVXY]\d[ABCEGHJ-NPRSTV-Z]\d[ABCEGHJ-NPRSTV-Z]\d$/.test(String(n || ""));
+  }
+
+  function getServiceAreaPrefixes() {
+    var cfg = CONFIG.serviceArea || {};
+    var list = Array.isArray(cfg.allowedPrefixes) ? cfg.allowedPrefixes : [];
+    return list.map(function (x) {
+      return String(x || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    }).filter(Boolean);
+  }
+
+  function getServiceAreaState() {
+    if (!app.serviceAreaState) {
+      app.serviceAreaState = {
+        checked: false,
+        valid: false,
+        qualified: false,
+        normalized: "",
+        formatted: "",
+        fsa: "",
+        reason: "empty"
+      };
+    }
+    return app.serviceAreaState;
+  }
+
+  function setServiceAreaState(next) {
+    app.serviceAreaState = Object.assign(getServiceAreaState(), next || {});
+    return app.serviceAreaState;
+  }
+
+  function evaluateServiceArea(rawPostal) {
+    var normalized = normalizePostal(rawPostal);
+    var formatted = formatPostal(normalized);
+    var fsa = normalized.slice(0, 3);
+    var result = {
+      checked: true,
+      valid: false,
+      qualified: false,
+      normalized: normalized,
+      formatted: formatted,
+      fsa: fsa,
+      reason: "invalid_format"
+    };
+
+    if (!normalized) {
+      result.checked = false;
+      result.reason = "empty";
+      return result;
+    }
+
+    if (!isValidCanadianPostal(normalized)) return result;
+
+    var prefixes = getServiceAreaPrefixes();
+    result.valid = true;
+    result.qualified = prefixes.length ? prefixes.some(function (prefix) { return fsa.indexOf(prefix) === 0; }) : true;
+    result.reason = result.qualified ? "qualified" : "out_of_area";
+    return result;
+  }
+
+  function serviceAreaMessage(state) {
+    var cfg = CONFIG.serviceArea || {};
+    var s = state || getServiceAreaState();
+    if (!serviceAreaEnabled()) return "Service area check disabled.";
+    if (!s.checked) return String(cfg.helpText || "Enter a Canadian postal code to confirm delivery coverage.");
+    if (s.reason === "invalid_format") return "Enter a valid postal code (example: M5V 2T6).";
+    if (s.qualified) return "Great, this postal code is within our service area.";
+    return String(cfg.outOfAreaText || "This postal code may be outside our standard service area. Call us to confirm options.");
+  }
+
+  function applyServiceAreaGate() {
+    app.quoteContext = app.quoteContext || { product: "", source: "Website", page: location.href, ts: new Date().toISOString() };
+
+    var qualWrap = q("#bsv-qd-qual");
+    var input = q("#bsv-qd-postal");
+    var status = q("#bsv-qd-qual-status");
+    var gate = q("#bsv-qd-gate");
+    var gateText = q("#bsv-qd-gate-text");
+    var frame = q("#bsv-qd-frame");
+    var openNew = q("#bsv-qd-open-new");
+    var state = getServiceAreaState();
+
+    if (!serviceAreaEnabled()) {
+      if (qualWrap) qualWrap.style.display = "none";
+      if (gate) gate.classList.remove("open");
+      if (openNew) {
+        openNew.setAttribute("href", formOpenNewUrl(app.quoteContext || {}));
+        openNew.removeAttribute("aria-disabled");
+        openNew.removeAttribute("tabindex");
+      }
+      if (frame) {
+        var directSrc = formEmbedUrl(app.quoteContext || {});
+        if ((frame.getAttribute("src") || "") !== directSrc) frame.setAttribute("src", directSrc);
+      }
+      return;
+    }
+
+    if (qualWrap) qualWrap.style.display = "";
+    if (input && document.activeElement !== input) input.value = state.formatted || "";
+
+    if (state.formatted) app.quoteContext.postal = state.formatted;
+    else delete app.quoteContext.postal;
+
+    if (state.checked) app.quoteContext.serviceQualified = !!state.qualified;
+    else delete app.quoteContext.serviceQualified;
+
+    if (status) {
+      status.textContent = serviceAreaMessage(state);
+      status.setAttribute("data-state", state.qualified ? "ok" : (state.checked ? "warn" : "idle"));
+    }
+
+    if (state.qualified) {
+      if (gate) gate.classList.remove("open");
+      if (openNew) {
+        openNew.setAttribute("href", formOpenNewUrl(app.quoteContext || {}));
+        openNew.removeAttribute("aria-disabled");
+        openNew.removeAttribute("tabindex");
+      }
+      if (frame) {
+        var src = formEmbedUrl(app.quoteContext || {});
+        if ((frame.getAttribute("src") || "") !== src) frame.setAttribute("src", src);
+      }
+      return;
+    }
+
+    if (gate) gate.classList.add("open");
+    if (gateText) gateText.textContent = serviceAreaMessage(state);
+    if (openNew) {
+      openNew.setAttribute("href", "#");
+      openNew.setAttribute("aria-disabled", "true");
+      openNew.setAttribute("tabindex", "-1");
+    }
+    if (frame && frame.hasAttribute("src")) frame.removeAttribute("src");
+  }
+
   function buildPrefillParams(ctx) {
     var params = [];
     var p = CONFIG.prefillEntries || {};
     var contextLines = [];
+    var serviceStatus = "";
 
     if (p.product && ctx.product) params.push("entry." + p.product + "=" + encodeURIComponent(ctx.product));
     if (p.source && ctx.source) params.push("entry." + p.source + "=" + encodeURIComponent(ctx.source));
     if (p.page && ctx.page) params.push("entry." + p.page + "=" + encodeURIComponent(ctx.page));
+    if (p.postal && ctx.postal) params.push("entry." + p.postal + "=" + encodeURIComponent(ctx.postal));
+
+    if (ctx.serviceQualified === true) serviceStatus = "Qualified";
+    else if (ctx.serviceQualified === false) serviceStatus = "Outside Standard Area";
+    if (p.serviceStatus && serviceStatus) params.push("entry." + p.serviceStatus + "=" + encodeURIComponent(serviceStatus));
 
     if (ctx.product) contextLines.push("Product: " + ctx.product);
     if (ctx.source) contextLines.push("Source: " + ctx.source);
     if (ctx.page) contextLines.push("Page: " + ctx.page);
     if (ctx.ts) contextLines.push("Time: " + ctx.ts);
+    if (ctx.postal) contextLines.push("Postal: " + ctx.postal);
+    if (serviceStatus) contextLines.push("Service Area: " + serviceStatus);
     if (p.context && contextLines.length) {
       params.push("entry." + p.context + "=" + encodeURIComponent(contextLines.join(" | ")));
     }
@@ -449,11 +623,26 @@
       '#bsv-qd-title{margin:0;font:800 18px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#10263c;}' +
       '#bsv-qd-actions{display:flex;gap:8px;align-items:center;}' +
       '#bsv-qd-open-new{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;padding:8px 10px;border-radius:8px;background:#edf4fb;color:#12314d;font:700 12px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
+      '#bsv-qd-open-new[aria-disabled="true"]{opacity:.62;cursor:not-allowed;}' +
       '#bsv-qd-close{border:none;background:#f3f7fb;color:#1f3347;border-radius:8px;width:34px;height:34px;cursor:pointer;font-size:18px;line-height:1;}' +
       '#bsv-qd-context-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid #edf2f7;background:#fafcff;}' +
       '#bsv-qd-context-text{color:#334a5f;font:600 12px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
       '#bsv-qd-copy{border:none;background:#edf4fb;color:#12314d;border-radius:8px;padding:7px 10px;cursor:pointer;font:700 12px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
-      '#bsv-qd-frame-wrap{flex:1;min-height:0;}' +
+      '#bsv-qd-qual{padding:10px 14px;border-bottom:1px solid #edf2f7;background:#fff;}' +
+      '#bsv-qd-qual-label{display:block;margin:0 0 6px;color:#122f4a;font:700 12px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
+      '#bsv-qd-qual-row{display:flex;gap:8px;align-items:center;}' +
+      '#bsv-qd-postal{flex:1;border:1px solid #d7e1eb;border-radius:10px;padding:10px 11px;font:700 14px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#13283f;outline:none;text-transform:uppercase;}' +
+      '#bsv-qd-postal:focus{border-color:#0f3557;box-shadow:0 0 0 3px rgba(15,53,87,.12);}' +
+      '#bsv-qd-check{border:none;border-radius:10px;padding:10px 12px;background:#0f3557;color:#fff;cursor:pointer;font:800 12px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;white-space:nowrap;}' +
+      '#bsv-qd-check:hover{background:#12456f;}' +
+      '#bsv-qd-qual-status{margin-top:7px;color:#5a6f82;font:600 12px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
+      '#bsv-qd-qual-status[data-state="ok"]{color:#0f6a3d;}' +
+      '#bsv-qd-qual-status[data-state="warn"]{color:#934112;}' +
+      '#bsv-qd-frame-wrap{position:relative;flex:1;min-height:0;}' +
+      '#bsv-qd-gate{position:absolute;inset:0;z-index:2;display:none;align-items:center;justify-content:center;flex-direction:column;gap:10px;text-align:center;padding:16px;background:linear-gradient(180deg,rgba(255,255,255,.98),rgba(247,251,255,.98));}' +
+      '#bsv-qd-gate.open{display:flex;}' +
+      '#bsv-qd-gate-text{margin:0;color:#394f63;font:600 13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;max-width:420px;}' +
+      '#bsv-qd-gate-call{display:inline-flex;align-items:center;justify-content:center;min-height:36px;padding:0 12px;border-radius:9px;background:#0f3557;color:#fff;text-decoration:none;font:800 12px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
       '#bsv-qd-frame{width:100%;height:100%;border:0;}' +
       '@media (max-width:980px){#bsv-aio-trust{grid-template-columns:1fr 1fr;}}' +
       '@media (max-width:1100px){#bsv-drail-root{display:none;}}' +
@@ -499,12 +688,18 @@
       contextText.textContent = "Context: " + productLabel + "Source: " + app.quoteContext.source;
     }
 
-    if (frame) frame.setAttribute("src", formEmbedUrl(app.quoteContext));
-    if (openNew) openNew.setAttribute("href", formOpenNewUrl(app.quoteContext));
+    if (frame && frame.hasAttribute("src")) frame.removeAttribute("src");
+
+    if (!serviceAreaEnabled()) {
+      if (frame) frame.setAttribute("src", formEmbedUrl(app.quoteContext));
+      if (openNew) openNew.setAttribute("href", formOpenNewUrl(app.quoteContext));
+    }
+    applyServiceAreaGate();
 
     trackEvent("bs_quote_open", {
       source: app.quoteContext.source || "Website",
-      product: app.quoteContext.product || "General"
+      product: app.quoteContext.product || "General",
+      service_qualified: app.quoteContext.serviceQualified === true ? "yes" : (app.quoteContext.serviceQualified === false ? "no" : "unknown")
     });
 
     if (overlay) {
@@ -531,7 +726,19 @@
       '      <div id="bsv-qd-context-text">Context: General quote request</div>',
       '      <button id="bsv-qd-copy" type="button">Copy details</button>',
       '    </div>',
+      '    <div id="bsv-qd-qual">',
+      '      <label id="bsv-qd-qual-label" for="bsv-qd-postal">Delivery Postal Code</label>',
+      '      <div id="bsv-qd-qual-row">',
+      '        <input id="bsv-qd-postal" type="text" inputmode="text" autocomplete="postal-code" maxlength="7" placeholder="M5V 2T6" />',
+      '        <button id="bsv-qd-check" type="button">Check Area</button>',
+      '      </div>',
+      '      <div id="bsv-qd-qual-status" data-state="idle">Enter a Canadian postal code to confirm delivery coverage.</div>',
+      '    </div>',
       '    <div id="bsv-qd-frame-wrap">',
+      '      <div id="bsv-qd-gate" class="open">',
+      '        <p id="bsv-qd-gate-text">Enter your postal code and check service area to continue.</p>',
+      '        <a id="bsv-qd-gate-call" href="' + esc(callUrl()) + '">Call Sales</a>',
+      '      </div>',
       '      <iframe id="bsv-qd-frame" title="BuildSaver Quote Form" loading="lazy"></iframe>',
       '    </div>',
       '  </aside>',
@@ -546,19 +753,85 @@
     var copyBtn = q("#bsv-qd-copy");
     var openNew = q("#bsv-qd-open-new");
     var frame = q("#bsv-qd-frame");
+    var postalInput = q("#bsv-qd-postal");
+    var postalCheck = q("#bsv-qd-check");
 
     if (closeBtn) closeBtn.addEventListener("click", closeDrawer);
     if (overlay) overlay.addEventListener("click", function (e) { if (!panel.contains(e.target)) closeDrawer(); });
 
+    function runServiceAreaCheck(sourceOverride) {
+      if (!serviceAreaEnabled()) return null;
+      var rawPostal = postalInput ? postalInput.value : "";
+      var state = setServiceAreaState(evaluateServiceArea(rawPostal));
+      var ctx = app.quoteContext || {};
+      var source = sourceOverride || ctx.source || "Website";
+
+      trackEvent("bs_service_area_checked", {
+        source: source,
+        product: ctx.product || "General",
+        postal_fsa: state.fsa || "",
+        qualified: state.qualified ? "yes" : "no",
+        reason: state.reason
+      });
+
+      if (state.checked && !state.qualified && state.reason === "out_of_area") {
+        trackEvent("bs_service_area_blocked", {
+          source: source,
+          product: ctx.product || "General",
+          reason: "out_of_area",
+          postal_fsa: state.fsa || ""
+        });
+      }
+
+      applyServiceAreaGate();
+      return state;
+    }
+
+    if (postalInput) {
+      postalInput.addEventListener("input", function () {
+        var normalized = normalizePostal(postalInput.value);
+        postalInput.value = formatPostal(normalized);
+
+        var prev = getServiceAreaState();
+        if (prev.normalized !== normalized || prev.checked) {
+          setServiceAreaState({
+            checked: false,
+            valid: false,
+            qualified: false,
+            normalized: normalized,
+            formatted: formatPostal(normalized),
+            fsa: normalized.slice(0, 3),
+            reason: normalized ? "pending" : "empty"
+          });
+          applyServiceAreaGate();
+        }
+      });
+
+      postalInput.addEventListener("keydown", function (e) {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        runServiceAreaCheck("Quote Drawer");
+      });
+    }
+
+    if (postalCheck) {
+      postalCheck.addEventListener("click", function () {
+        runServiceAreaCheck("Quote Drawer");
+      });
+    }
+
     if (copyBtn) {
       copyBtn.addEventListener("click", function () {
         var ctx = app.quoteContext || {};
+        var serviceLabel = ctx.serviceQualified === true ? "Qualified" : (ctx.serviceQualified === false ? "Outside Standard Area" : "Not checked");
         var lines = [
           "Quote Context",
           "Product: " + (ctx.product || "Not specified"),
           "Source: " + (ctx.source || "Website"),
           "Page: " + (ctx.page || location.href),
-          "Time: " + (ctx.ts || new Date().toISOString())
+          "Time: " + (ctx.ts || new Date().toISOString()),
+          "Postal: " + (ctx.postal || "Not provided"),
+          "Service Area: " + serviceLabel
         ].join("\n");
 
         if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -571,17 +844,36 @@
     }
 
     if (openNew) {
-      openNew.addEventListener("click", function () {
+      openNew.addEventListener("click", function (e) {
         var ctx = app.quoteContext || {};
+        var state = getServiceAreaState();
+
+        if (serviceAreaEnabled() && !state.qualified) {
+          e.preventDefault();
+          trackEvent("bs_service_area_blocked", {
+            source: ctx.source || "Website",
+            product: ctx.product || "General",
+            reason: state.reason || "not_qualified",
+            postal_fsa: state.fsa || ""
+          });
+          applyServiceAreaGate();
+          if (postalInput) postalInput.focus();
+          return;
+        }
+
         trackEvent("bs_quote_open_new_tab", {
           source: ctx.source || "Website",
-          product: ctx.product || "General"
+          product: ctx.product || "General",
+          postal_fsa: state.fsa || ""
         });
       });
     }
 
     if (frame) {
       frame.addEventListener("load", function () {
+        var src = frame.getAttribute("src") || "";
+        if (src.indexOf("docs.google.com/forms") === -1) return;
+
         var session = app.quoteSession;
         if (!session) return;
 
@@ -605,6 +897,7 @@
       });
     }
 
+    applyServiceAreaGate();
     app.openDrawer = openDrawerFromContext;
   }
 
@@ -1152,5 +1445,5 @@
   }
 })();
 /* BuildSaver deploy metadata */
-window.__BUILDSAVER_DEPLOY_BUILD_AT = "2026-04-13T04:05:18Z";
-window.__BUILDSAVER_DEPLOY_SOURCE_SHA = "a9c817c33f7f7c134c074e0af3159e031fd1bd11";
+window.__BUILDSAVER_DEPLOY_BUILD_AT = "2026-04-13T04:47:42Z";
+window.__BUILDSAVER_DEPLOY_SOURCE_SHA = "19cec003d4fa2872eadfd6860908fde1a626edda";

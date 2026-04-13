@@ -1,7 +1,7 @@
 {
-  "builtAtUtc": "2026-04-13T04:05:18Z",
-  "sha256": "00e80f8ca8a26a212293bc13e67b7aa93081f72316e0c56ebc0b7b9d6b87b723",
+  "builtAtUtc": "2026-04-13T04:47:42Z",
+  "sha256": "8c66977744d7279f7c323732a4f0b09b66ad01d2c852b95e13970624e853d130",
   "assetPath": "footer-code-injection.js",
-  "sizeBytes": 51868,
-  "sourceSha": "a9c817c33f7f7c134c074e0af3159e031fd1bd11"
+  "sizeBytes": 64242,
+  "sourceSha": "19cec003d4fa2872eadfd6860908fde1a626edda"
 }
