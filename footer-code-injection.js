@@ -2,11 +2,11 @@
   var APP_KEY = "__buildSaverAllInOneV9";
   var app = window[APP_KEY] || (window[APP_KEY] = {});
 
-  if (app.version === "v15" && typeof app.remount === "function") {
+  if (app.version === "v16" && typeof app.remount === "function") {
     app.remount();
     return;
   }
-  app.version = "v15";
+  app.version = "v16";
 
   var CONFIG = {
     ga4: {
@@ -27,6 +27,18 @@
       defaultWidthFt: 12,
       defaultWastePctDrywall: 12,
       defaultWastePctInsulation: 8
+    },
+    reviews: {
+      enabled: true,
+      endpointUrl: "",
+      googlePlaceId: "",
+      googleApiKey: "",
+      timeoutMs: 4500,
+      maxItems: 4,
+      minRating: 4,
+      minTextLength: 20,
+      maxAgeDays: 1095,
+      blockedTerms: ["refund scam", "spam link"]
     },
     quoteConversion: {
       returnParam: "bsv_quote_submitted",
@@ -147,6 +159,239 @@
     if (n.charAt(0) === "+") return n;
     if (n.length === 10) return "+1" + n;
     return n;
+  }
+
+  function readPath(obj, path) {
+    var cur = obj;
+    var parts = String(path || "").split(".");
+    var i;
+    for (i = 0; i < parts.length; i += 1) {
+      if (!cur || typeof cur !== "object") return "";
+      cur = cur[parts[i]];
+    }
+    return cur;
+  }
+
+  function firstString(obj, paths) {
+    var i;
+    for (i = 0; i < paths.length; i += 1) {
+      var value = readPath(obj, paths[i]);
+      if (typeof value === "string" && value.trim()) return value.trim();
+    }
+    return "";
+  }
+
+  function clamp(n, min, max) {
+    var v = Number(n);
+    if (!isFinite(v)) v = min;
+    if (v < min) return min;
+    if (v > max) return max;
+    return v;
+  }
+
+  function parseReviewRating(raw) {
+    var n = Number(raw);
+    if (!isFinite(n)) return 0;
+    if (n > 5 && n <= 10) n = n / 2;
+    return clamp(Math.round(n * 10) / 10, 0, 5);
+  }
+
+  function parsePublishedMs(raw) {
+    if (typeof raw === "number" && isFinite(raw) && raw > 0) {
+      if (raw > 1000000000000) return Math.floor(raw);
+      if (raw > 1000000000) return Math.floor(raw * 1000);
+    }
+    if (typeof raw === "string" && raw.trim()) {
+      var parsed = Date.parse(raw);
+      if (isFinite(parsed) && parsed > 0) return parsed;
+    }
+    return 0;
+  }
+
+  function ageDaysFromMs(ms) {
+    if (!ms) return -1;
+    var diff = Date.now() - ms;
+    if (diff < 0) return 0;
+    return Math.floor(diff / 86400000);
+  }
+
+  function starLabel(rating) {
+    var full = Math.max(0, Math.min(5, Math.round(Number(rating) || 0)));
+    return "★★★★★".slice(0, full) + "☆☆☆☆☆".slice(0, 5 - full);
+  }
+
+  function ageLabel(days) {
+    var n = Number(days);
+    if (!isFinite(n) || n < 0) return "";
+    if (n === 0) return "today";
+    if (n === 1) return "1 day ago";
+    if (n < 30) return n + " days ago";
+    if (n < 365) return Math.round(n / 30) + " mo ago";
+    return Math.round(n / 365) + " yr ago";
+  }
+
+  function clipText(text, maxLen) {
+    var t = String(text || "").trim();
+    var max = Number(maxLen) || 280;
+    if (t.length <= max) return t;
+    return t.slice(0, max - 1).trim() + "…";
+  }
+
+  function safeHttpUrl(url) {
+    var u = String(url || "").trim();
+    return /^https?:\/\//i.test(u) ? u : "";
+  }
+
+  function getReviewsConfig() {
+    var base = CONFIG.reviews || {};
+    var out = {
+      enabled: base.enabled !== false,
+      endpointUrl: String(base.endpointUrl || "").trim(),
+      googlePlaceId: String(base.googlePlaceId || "").trim(),
+      googleApiKey: String(base.googleApiKey || "").trim(),
+      timeoutMs: clamp(base.timeoutMs || 4500, 1000, 15000),
+      maxItems: clamp(base.maxItems || 4, 1, 8),
+      minRating: clamp(base.minRating || 4, 1, 5),
+      minTextLength: clamp(base.minTextLength || 20, 0, 300),
+      maxAgeDays: clamp(base.maxAgeDays || 1095, 0, 3650),
+      blockedTerms: Array.isArray(base.blockedTerms) ? base.blockedTerms : []
+    };
+
+    if (typeof window.BUILDSAVER_REVIEWS_ENABLED === "boolean") out.enabled = window.BUILDSAVER_REVIEWS_ENABLED;
+    if (typeof window.BUILDSAVER_REVIEWS_ENDPOINT === "string" && window.BUILDSAVER_REVIEWS_ENDPOINT.trim()) out.endpointUrl = window.BUILDSAVER_REVIEWS_ENDPOINT.trim();
+    if (typeof window.BUILDSAVER_GOOGLE_PLACE_ID === "string" && window.BUILDSAVER_GOOGLE_PLACE_ID.trim()) out.googlePlaceId = window.BUILDSAVER_GOOGLE_PLACE_ID.trim();
+    if (typeof window.BUILDSAVER_GOOGLE_API_KEY === "string" && window.BUILDSAVER_GOOGLE_API_KEY.trim()) out.googleApiKey = window.BUILDSAVER_GOOGLE_API_KEY.trim();
+
+    out.blockedTerms = out.blockedTerms.map(function (term) { return norm(term); }).filter(Boolean);
+    return out;
+  }
+
+  function normalizeReview(raw) {
+    var rating = parseReviewRating(
+      raw && (raw.rating || raw.stars || raw.score || readPath(raw, "reviewRating.ratingValue"))
+    );
+    var text = firstString(raw, ["text", "comment", "reviewText", "content", "text.text", "originalText.text"]);
+    var name = firstString(raw, ["author_name", "author", "reviewer", "user", "authorAttribution.displayName", "name"]) || "Verified Customer";
+    var profileUrl = firstString(raw, ["author_url", "authorAttribution.uri", "url"]);
+    var sourceLabel = firstString(raw, ["source", "provider", "platform"]) || "Google";
+    var publishedMs = parsePublishedMs(raw && (raw.time || raw.timestamp || raw.publishTime || raw.publishedAt || raw.createdAt));
+    var days = ageDaysFromMs(publishedMs);
+
+    return {
+      rating: rating,
+      text: clipText(text, 320),
+      name: clipText(name, 60),
+      profileUrl: profileUrl,
+      sourceLabel: clipText(sourceLabel, 24),
+      publishedMs: publishedMs,
+      ageDays: days
+    };
+  }
+
+  function extractReviewsArray(payload) {
+    if (Array.isArray(payload)) return payload;
+    if (payload && Array.isArray(payload.reviews)) return payload.reviews;
+    if (payload && payload.result && Array.isArray(payload.result.reviews)) return payload.result.reviews;
+    if (payload && payload.data && Array.isArray(payload.data.reviews)) return payload.data.reviews;
+    if (payload && payload.place && Array.isArray(payload.place.reviews)) return payload.place.reviews;
+    return [];
+  }
+
+  function moderateReviews(list, cfg) {
+    var seen = {};
+    var out = [];
+
+    list.forEach(function (review) {
+      if (!review || typeof review !== "object") return;
+      if (review.rating < cfg.minRating) return;
+      if (cfg.minTextLength > 0 && String(review.text || "").length < cfg.minTextLength) return;
+      if (cfg.maxAgeDays > 0 && review.ageDays >= 0 && review.ageDays > cfg.maxAgeDays) return;
+
+      var textKey = norm(review.text || "");
+      var blocked = cfg.blockedTerms.some(function (term) { return textKey.indexOf(term) !== -1; });
+      if (blocked) return;
+
+      var dedupeKey = norm(review.name || "") + "|" + textKey.slice(0, 80);
+      if (seen[dedupeKey]) return;
+      seen[dedupeKey] = true;
+      out.push(review);
+    });
+
+    out.sort(function (a, b) {
+      if (a.publishedMs && b.publishedMs && a.publishedMs !== b.publishedMs) return b.publishedMs - a.publishedMs;
+      if (a.rating !== b.rating) return b.rating - a.rating;
+      return 0;
+    });
+    return out.slice(0, cfg.maxItems);
+  }
+
+  function resolveGoogleReviewsEndpoint(cfg) {
+    if (!cfg.googlePlaceId || !cfg.googleApiKey) return "";
+    return "https://maps.googleapis.com/maps/api/place/details/json?place_id=" + encodeURIComponent(cfg.googlePlaceId) +
+      "&fields=name,rating,user_ratings_total,reviews,url&reviews_sort=newest&key=" + encodeURIComponent(cfg.googleApiKey);
+  }
+
+  function fetchJsonWithTimeout(url, timeoutMs) {
+    return new Promise(function (resolve, reject) {
+      if (!window.fetch) {
+        reject(new Error("fetch_unavailable"));
+        return;
+      }
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        reject(new Error("timeout"));
+      }, timeoutMs);
+
+      fetch(url, { cache: "no-store" })
+        .then(function (res) {
+          if (!res.ok) throw new Error("http_" + res.status);
+          return res.json();
+        })
+        .then(function (json) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve(json);
+        })
+        .catch(function (err) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          reject(err);
+        });
+    });
+  }
+
+  function loadModeratedReviews() {
+    var cfg = getReviewsConfig();
+    if (!cfg.enabled) return Promise.resolve({ source: "disabled", reviews: [], reason: "disabled" });
+
+    var inlineRaw = Array.isArray(window.BUILDSAVER_GOOGLE_REVIEWS) ? window.BUILDSAVER_GOOGLE_REVIEWS : [];
+    if (inlineRaw.length) {
+      return Promise.resolve({
+        source: "inline",
+        reviews: moderateReviews(inlineRaw.map(normalizeReview), cfg),
+        reason: "inline"
+      });
+    }
+
+    var endpoint = cfg.endpointUrl || resolveGoogleReviewsEndpoint(cfg);
+    if (!endpoint) return Promise.resolve({ source: "unconfigured", reviews: [], reason: "no_endpoint" });
+
+    return fetchJsonWithTimeout(endpoint, cfg.timeoutMs)
+      .then(function (payload) {
+        var rawList = extractReviewsArray(payload);
+        return {
+          source: "remote",
+          reviews: moderateReviews(rawList.map(normalizeReview), cfg),
+          reason: "ok"
+        };
+      })
+      .catch(function (err) {
+        return { source: "remote", reviews: [], reason: String((err && err.message) || "fetch_error") };
+      });
   }
 
   function extractGa4IdFromText(text) {
@@ -621,6 +866,9 @@
       '.bsv-review{margin:0;border:1px solid #e9f0f6;border-radius:10px;padding:10px;background:#fbfdff;}' +
       '.bsv-review p{margin:0 0 6px;color:#243b50;font:600 13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
       '.bsv-review footer{color:#5a6f82;font:700 12px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
+      '.bsv-review footer a{color:#0f3557;text-decoration:none;}' +
+      '.bsv-review footer a:hover{text-decoration:underline;}' +
+      '#bsv-proof-meta{margin-top:8px;color:#5a6f82;font:600 12px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
       '.bsv-proof-cta{margin-top:10px;border:none;border-radius:10px;padding:10px 14px;background:#f97316;color:#fff;cursor:pointer;font:800 14px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
       '.bsv-proof-cta:hover{background:#ea580c;}' +
       '#bsv-aio-mobile{position:fixed;left:10px;right:10px;bottom:calc(env(safe-area-inset-bottom,0px) + 8px);z-index:10020;display:none;grid-template-columns:1fr 1fr 1fr;gap:8px;padding:8px;border:1px solid #d8e4ef;border-radius:14px;background:rgba(255,255,255,.96);backdrop-filter:blur(8px);box-shadow:0 14px 34px rgba(16,38,60,.2);}' +
@@ -1447,22 +1695,55 @@
   function mountProof(anchorEl) {
     if (!isHome()) return null;
 
+    function fallbackReviews() {
+      return (CONFIG.testimonials || []).map(function (t) {
+        return {
+          rating: 5,
+          text: String(t.quote || ""),
+          name: String(t.name || "Contractor"),
+          profileUrl: "",
+          sourceLabel: "BuildSaver",
+          publishedMs: 0,
+          ageDays: -1
+        };
+      });
+    }
+
+    function reviewFooterHtml(review) {
+      var bits = [];
+      var stars = starLabel(review.rating);
+      var ratingText = Number(review.rating) ? (" " + Number(review.rating).toFixed(1)) : "";
+      var age = ageLabel(review.ageDays);
+      var sourceLabel = clipText(review.sourceLabel || "Google", 24);
+      bits.push(stars + ratingText);
+      if (age) bits.push(age);
+      bits.push(sourceLabel);
+
+      var name = esc(review.name || "Verified Customer");
+      var profileUrl = safeHttpUrl(review.profileUrl);
+      var nameHtml = profileUrl ? ('<a href="' + esc(profileUrl) + '" target="_blank" rel="noopener noreferrer">' + name + "</a>") : name;
+      return nameHtml + " • " + bits.join(" • ");
+    }
+
+    function renderReviews(target, reviews) {
+      target.innerHTML = reviews.map(function (review) {
+        return (
+          '<blockquote class="bsv-review">' +
+            '<p>"' + esc(review.text || "") + '"</p>' +
+            '<footer>' + reviewFooterHtml(review) + '</footer>' +
+          '</blockquote>'
+        );
+      }).join("");
+    }
+
     var section = document.createElement("section");
     section.id = IDS.proof;
 
     section.innerHTML =
       '<article class="bsv-proof-card">' +
         '<h2>Contractor Reviews</h2>' +
-        '<div class="bsv-proof-reviews">' +
-          CONFIG.testimonials.map(function (t) {
-            return (
-              '<blockquote class="bsv-review">' +
-                '<p>"' + esc(t.quote) + '"</p>' +
-                '<footer>' + esc(t.name) + '</footer>' +
-              '</blockquote>'
-            );
-          }).join("") +
-        '</div>' +
+        '<div class="bsv-proof-reviews" id="bsv-proof-reviews"></div>' +
+        '<div id="bsv-proof-meta">Loading recent Google reviews...</div>' +
         '<button class="bsv-proof-cta" type="button" data-open-quote-drawer="1" data-source="Reviews">Request Quote</button>' +
       '</article>';
 
@@ -1471,6 +1752,33 @@
       var main = q("main") || document.body;
       main.insertBefore(section, main.firstChild);
     }
+
+    var reviewsRoot = q("#bsv-proof-reviews", section);
+    var meta = q("#bsv-proof-meta", section);
+    var fallback = fallbackReviews();
+    if (reviewsRoot) renderReviews(reviewsRoot, fallback);
+    if (meta) meta.textContent = "Showing recent contractor feedback.";
+
+    loadModeratedReviews().then(function (state) {
+      var rows = (state && Array.isArray(state.reviews)) ? state.reviews : [];
+      if (rows.length) {
+        if (reviewsRoot) renderReviews(reviewsRoot, rows);
+        if (meta) meta.textContent = "Live Google reviews loaded (" + rows.length + ").";
+        trackEvent("bs_reviews_loaded", {
+          source: state.source || "remote",
+          count: rows.length
+        });
+        return;
+      }
+
+      if (reviewsRoot) renderReviews(reviewsRoot, fallback);
+      if (meta) meta.textContent = "Live reviews unavailable right now. Showing fallback testimonials.";
+      trackEvent("bs_reviews_fallback", {
+        source: state.source || "fallback",
+        reason: state.reason || "no_reviews",
+        count: fallback.length
+      });
+    });
 
     return section;
   }
@@ -1734,5 +2042,5 @@
   }
 })();
 /* BuildSaver deploy metadata */
-window.__BUILDSAVER_DEPLOY_BUILD_AT = "2026-04-13T05:50:33Z";
-window.__BUILDSAVER_DEPLOY_SOURCE_SHA = "a898c3164c02d36c6f2aace2c4f0e2031f373041";
+window.__BUILDSAVER_DEPLOY_BUILD_AT = "2026-04-13T06:03:08Z";
+window.__BUILDSAVER_DEPLOY_SOURCE_SHA = "28f3350196d700bb4eb922f66bae63a2a351d075";
