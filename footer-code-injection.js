@@ -20,6 +20,14 @@
       helpText: "Service area check uses your delivery postal code.",
       outOfAreaText: "This postal code may be outside our standard service area. Call us to confirm options."
     },
+    estimator: {
+      enabled: true,
+      defaultMaterial: "drywall",
+      defaultLengthFt: 20,
+      defaultWidthFt: 12,
+      defaultWastePctDrywall: 12,
+      defaultWastePctInsulation: 8
+    },
     quoteConversion: {
       returnParam: "bsv_quote_submitted",
       returnValue: "1",
@@ -33,7 +41,8 @@
       page: "",
       context: "1954630944",
       postal: "",
-      serviceStatus: ""
+      serviceStatus: "",
+      estimate: ""
     },
     trust: [
       { t: "Fast Quote Turnaround", s: "Most requests answered within business hours." },
@@ -81,6 +90,7 @@
     finder: "bsv-aio-finder-root",
     trust: "bsv-aio-trust",
     mostRequested: "bsv-mr-section",
+    estimator: "bsv-est-section",
     cats: "bsv-aio-cats",
     faq: "bsv-aio-faq",
     faqJson: "bsv-aio-faq-jsonld",
@@ -429,6 +439,7 @@
     if (p.source && ctx.source) params.push("entry." + p.source + "=" + encodeURIComponent(ctx.source));
     if (p.page && ctx.page) params.push("entry." + p.page + "=" + encodeURIComponent(ctx.page));
     if (p.postal && ctx.postal) params.push("entry." + p.postal + "=" + encodeURIComponent(ctx.postal));
+    if (p.estimate && ctx.estimateSummary) params.push("entry." + p.estimate + "=" + encodeURIComponent(ctx.estimateSummary));
 
     if (ctx.serviceQualified === true) serviceStatus = "Qualified";
     else if (ctx.serviceQualified === false) serviceStatus = "Outside Standard Area";
@@ -440,6 +451,7 @@
     if (ctx.ts) contextLines.push("Time: " + ctx.ts);
     if (ctx.postal) contextLines.push("Postal: " + ctx.postal);
     if (serviceStatus) contextLines.push("Service Area: " + serviceStatus);
+    if (ctx.estimateSummary) contextLines.push("Estimate: " + ctx.estimateSummary);
     if (p.context && contextLines.length) {
       params.push("entry." + p.context + "=" + encodeURIComponent(contextLines.join(" | ")));
     }
@@ -509,7 +521,7 @@
   }
 
   function cleanup() {
-    var ids = [IDS.style, IDS.finder, IDS.trust, IDS.mostRequested, IDS.cats, IDS.faq, IDS.faqJson, IDS.proof, IDS.mobile, IDS.drawerRoot, IDS.desktopRail, IDS.exitNudge].concat(LEGACY_IDS);
+    var ids = [IDS.style, IDS.finder, IDS.trust, IDS.mostRequested, IDS.estimator, IDS.cats, IDS.faq, IDS.faqJson, IDS.proof, IDS.mobile, IDS.drawerRoot, IDS.desktopRail, IDS.exitNudge].concat(LEGACY_IDS);
     ids.forEach(function (id) {
       var el = document.getElementById(id);
       if (el && el.parentNode) el.parentNode.removeChild(el);
@@ -556,6 +568,24 @@
       '.bsv-mr-row{display:flex;flex-wrap:wrap;gap:8px;}' +
       '.bsv-mr-chip{border:none;border-radius:999px;padding:8px 12px;background:#edf4fb;color:#12314d;cursor:pointer;font:700 12px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
       '.bsv-mr-chip:hover{background:#dfeaf5;}' +
+      '#bsv-est-section{max-width:1200px;margin:10px auto 14px;padding:0 2px;}' +
+      '.bsv-est-card{border:1px solid #dbe6f0;border-radius:14px;background:#fff;padding:14px;box-shadow:0 8px 20px rgba(15,53,87,.06);}' +
+      '.bsv-est-head{display:flex;justify-content:space-between;align-items:flex-end;gap:10px;margin-bottom:10px;}' +
+      '.bsv-est-title{margin:0;color:#10263c;font:800 21px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
+      '.bsv-est-sub{margin:4px 0 0;color:#5a6f82;font:600 12px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
+      '.bsv-est-grid{display:grid;grid-template-columns:1.15fr .9fr .9fr .8fr auto;gap:8px;align-items:end;}' +
+      '.bsv-est-field{display:flex;flex-direction:column;gap:5px;}' +
+      '.bsv-est-field label{color:#334a5f;font:700 12px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
+      '.bsv-est-input,.bsv-est-select{border:1px solid #d7e1eb;border-radius:10px;padding:10px 10px;color:#142e45;background:#fff;font:700 13px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;outline:none;}' +
+      '.bsv-est-input:focus,.bsv-est-select:focus{border-color:#0f3557;box-shadow:0 0 0 3px rgba(15,53,87,.12);}' +
+      '.bsv-est-calc{border:none;border-radius:10px;min-height:38px;padding:0 12px;background:#0f3557;color:#fff;cursor:pointer;font:800 13px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
+      '.bsv-est-calc:hover{background:#12456f;}' +
+      '.bsv-est-result{margin-top:10px;border:1px solid #e7eef5;border-radius:10px;background:#f9fcff;padding:10px;color:#264055;font:600 13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:42px;}' +
+      '.bsv-est-actions{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;}' +
+      '.bsv-est-quote{border:none;border-radius:10px;min-height:38px;padding:0 12px;background:#f97316;color:#fff;cursor:pointer;font:800 13px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
+      '.bsv-est-quote:hover{background:#ea580c;}' +
+      '.bsv-est-quote:disabled{opacity:.6;cursor:not-allowed;background:#f97316;}' +
+      '.bsv-est-hint{color:#5a6f82;font:600 12px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:flex;align-items:center;}' +
       '#bsv-aio-cats{max-width:1200px;margin:10px auto 14px;padding:0 2px;}' +
       '#bsv-aio-cats h2{margin:0 0 10px;color:#10263c;font:800 22px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
       '.bsv-aio-cat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;}' +
@@ -644,10 +674,10 @@
       '#bsv-qd-gate-text{margin:0;color:#394f63;font:600 13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;max-width:420px;}' +
       '#bsv-qd-gate-call{display:inline-flex;align-items:center;justify-content:center;min-height:36px;padding:0 12px;border-radius:9px;background:#0f3557;color:#fff;text-decoration:none;font:800 12px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
       '#bsv-qd-frame{width:100%;height:100%;border:0;}' +
-      '@media (max-width:980px){#bsv-aio-trust{grid-template-columns:1fr 1fr;}}' +
+      '@media (max-width:980px){#bsv-aio-trust{grid-template-columns:1fr 1fr;}.bsv-est-grid{grid-template-columns:1fr 1fr;}.bsv-est-calc{grid-column:1/-1;}}' +
       '@media (max-width:1100px){#bsv-drail-root{display:none;}}' +
       '@media (max-width:900px){#bsv-aio-mobile{display:grid;}html.bsv-aio-mobile-pad body{padding-bottom:calc(86px + env(safe-area-inset-bottom,0px))!important;}#bsv-aio-faq{grid-template-columns:1fr;}}' +
-      '@media (max-width:640px){#bsv-aio-fab{right:12px;bottom:12px;padding:11px 14px;font-size:13px;}#bsv-aio-title{font-size:19px;}#bsv-aio-results{grid-template-columns:1fr;}#bsv-aio-trust{grid-template-columns:1fr;}#bsv-qd-title{font-size:16px;}#bsv-exit-title{font-size:19px;}#bsv-exit-actions{grid-template-columns:1fr;}.bsv-mr-chip{padding:8px 10px;font-size:12px;}}';
+      '@media (max-width:640px){#bsv-aio-fab{right:12px;bottom:12px;padding:11px 14px;font-size:13px;}#bsv-aio-title{font-size:19px;}#bsv-aio-results{grid-template-columns:1fr;}#bsv-aio-trust{grid-template-columns:1fr;}#bsv-qd-title{font-size:16px;}#bsv-exit-title{font-size:19px;}#bsv-exit-actions{grid-template-columns:1fr;}.bsv-mr-chip{padding:8px 10px;font-size:12px;}.bsv-est-grid{grid-template-columns:1fr;}.bsv-est-calc,.bsv-est-quote{width:100%;}.bsv-est-actions{flex-direction:column;align-items:stretch;}.bsv-est-hint{display:block;}}';
 
     var style = document.createElement("style");
     style.id = IDS.style;
@@ -1052,6 +1082,205 @@
     return section;
   }
 
+  function mountEstimator(anchorEl) {
+    if (!isHome()) return null;
+    var cfg = CONFIG.estimator || {};
+    if (cfg.enabled === false) return null;
+
+    var modes = {
+      drywall: {
+        label: "Drywall (4x8 sheets)",
+        product: "CGC Drywall",
+        wasteDefault: Number(cfg.defaultWastePctDrywall) || 12,
+        unitArea: 32,
+        unitLabel: "sheets (4x8)"
+      },
+      insulation: {
+        label: "Batt Insulation (sq ft coverage)",
+        product: "Batt Fiberglass Insulation",
+        wasteDefault: Number(cfg.defaultWastePctInsulation) || 8,
+        unitArea: 1,
+        unitLabel: "sq ft coverage"
+      }
+    };
+
+    var defaultMaterial = modes[cfg.defaultMaterial] ? cfg.defaultMaterial : "drywall";
+    var section = document.createElement("section");
+    section.id = IDS.estimator;
+    section.innerHTML = [
+      '<article class="bsv-est-card">',
+      '  <div class="bsv-est-head">',
+      '    <div>',
+      '      <h2 class="bsv-est-title">Material Estimator</h2>',
+      '      <p class="bsv-est-sub">Quick directional estimate for drywall and insulation before requesting pricing.</p>',
+      '    </div>',
+      '  </div>',
+      '  <div class="bsv-est-grid">',
+      '    <div class="bsv-est-field">',
+      '      <label for="bsv-est-material">Material</label>',
+      '      <select id="bsv-est-material" class="bsv-est-select">',
+               Object.keys(modes).map(function (key) {
+                 var selected = key === defaultMaterial ? ' selected="selected"' : "";
+                 return '<option value="' + esc(key) + '"' + selected + '>' + esc(modes[key].label) + '</option>';
+               }).join(""),
+      '      </select>',
+      '    </div>',
+      '    <div class="bsv-est-field">',
+      '      <label for="bsv-est-len">Length (ft)</label>',
+      '      <input id="bsv-est-len" class="bsv-est-input" type="number" min="1" step="0.1" value="' + esc(String(cfg.defaultLengthFt || 20)) + '" />',
+      '    </div>',
+      '    <div class="bsv-est-field">',
+      '      <label for="bsv-est-width">Width (ft)</label>',
+      '      <input id="bsv-est-width" class="bsv-est-input" type="number" min="1" step="0.1" value="' + esc(String(cfg.defaultWidthFt || 12)) + '" />',
+      '    </div>',
+      '    <div class="bsv-est-field">',
+      '      <label for="bsv-est-waste">Waste (%)</label>',
+      '      <input id="bsv-est-waste" class="bsv-est-input" type="number" min="0" max="40" step="1" value="' + esc(String(modes[defaultMaterial].wasteDefault)) + '" />',
+      '    </div>',
+      '    <button id="bsv-est-calc" class="bsv-est-calc" type="button">Calculate</button>',
+      '  </div>',
+      '  <div id="bsv-est-result" class="bsv-est-result">Enter dimensions, then calculate estimate.</div>',
+      '  <div class="bsv-est-actions">',
+      '    <button id="bsv-est-quote" class="bsv-est-quote" type="button" disabled="disabled">Use Estimate in Quote</button>',
+      '    <div class="bsv-est-hint">Estimator is directional. Final quantities are confirmed during quote review.</div>',
+      '  </div>',
+      '</article>'
+    ].join("");
+
+    if (anchorEl && anchorEl.parentNode) anchorEl.insertAdjacentElement("afterend", section);
+    else {
+      var main = q("main") || document.body;
+      var first = q(".page-section, [data-section-id], section", main);
+      if (first && first.parentNode) first.insertAdjacentElement("afterend", section);
+      else main.insertBefore(section, main.firstChild);
+    }
+
+    var materialSel = q("#bsv-est-material", section);
+    var lenInput = q("#bsv-est-len", section);
+    var widthInput = q("#bsv-est-width", section);
+    var wasteInput = q("#bsv-est-waste", section);
+    var calcBtn = q("#bsv-est-calc", section);
+    var result = q("#bsv-est-result", section);
+    var quoteBtn = q("#bsv-est-quote", section);
+    var estimate = null;
+
+    function toPositiveNumber(v) {
+      var n = Number(v);
+      if (!isFinite(n) || n <= 0) return 0;
+      return n;
+    }
+
+    function toPercent(v, fallback) {
+      var n = Number(v);
+      if (!isFinite(n) || n < 0) return fallback;
+      if (n > 40) return 40;
+      return n;
+    }
+
+    function calculateEstimate() {
+      var key = materialSel && modes[materialSel.value] ? materialSel.value : defaultMaterial;
+      var mode = modes[key];
+      var lengthFt = toPositiveNumber(lenInput ? lenInput.value : 0);
+      var widthFt = toPositiveNumber(widthInput ? widthInput.value : 0);
+      var wastePct = toPercent(wasteInput ? wasteInput.value : mode.wasteDefault, mode.wasteDefault);
+      var baseArea = lengthFt * widthFt;
+
+      if (!lengthFt || !widthFt || !baseArea) return null;
+
+      var adjustedArea = baseArea * (1 + (wastePct / 100));
+      var units = mode.unitArea > 0 ? Math.ceil(adjustedArea / mode.unitArea) : 0;
+      if (units < 1) units = 1;
+
+      return {
+        key: key,
+        product: mode.product,
+        lengthFt: lengthFt,
+        widthFt: widthFt,
+        wastePct: wastePct,
+        baseArea: baseArea,
+        adjustedArea: adjustedArea,
+        units: units,
+        unitLabel: mode.unitLabel,
+        summary: units + " " + mode.unitLabel + " for ~" + Math.round(adjustedArea) + " sq ft total area (" + wastePct + "% waste)"
+      };
+    }
+
+    function resetEstimate() {
+      estimate = null;
+      if (quoteBtn) quoteBtn.disabled = true;
+      if (result) result.textContent = "Enter dimensions, then calculate estimate.";
+    }
+
+    function runEstimate(track) {
+      estimate = calculateEstimate();
+      if (!estimate) {
+        if (quoteBtn) quoteBtn.disabled = true;
+        if (result) result.textContent = "Add valid length and width values to calculate estimate.";
+        return;
+      }
+
+      if (result) result.textContent = "Estimated requirement: " + estimate.summary + ".";
+      if (quoteBtn) quoteBtn.disabled = false;
+
+      if (track) {
+        trackEvent("bs_estimator_calculated", {
+          source: "Estimator",
+          product: estimate.product,
+          material: estimate.key,
+          area_sqft: Math.round(estimate.adjustedArea),
+          units: estimate.units
+        });
+      }
+    }
+
+    if (materialSel) {
+      materialSel.addEventListener("change", function () {
+        var mode = modes[materialSel.value] || modes[defaultMaterial];
+        if (wasteInput) wasteInput.value = String(mode.wasteDefault);
+        resetEstimate();
+      });
+    }
+
+    [lenInput, widthInput, wasteInput].forEach(function (el) {
+      if (!el) return;
+      el.addEventListener("input", resetEstimate);
+      el.addEventListener("keydown", function (e) {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        runEstimate(true);
+      });
+    });
+
+    if (calcBtn) calcBtn.addEventListener("click", function () { runEstimate(true); });
+
+    if (quoteBtn) {
+      quoteBtn.addEventListener("click", function () {
+        if (!estimate) runEstimate(true);
+        if (!estimate) return;
+
+        app.quoteContext = {
+          product: estimate.product,
+          source: "Estimator",
+          page: location.href,
+          ts: new Date().toISOString(),
+          estimateSummary: estimate.summary
+        };
+
+        trackEvent("bs_estimator_quote_start", {
+          source: "Estimator",
+          product: estimate.product,
+          material: estimate.key,
+          area_sqft: Math.round(estimate.adjustedArea),
+          units: estimate.units
+        });
+
+        if (typeof app.openDrawer === "function") app.openDrawer(app.quoteContext);
+      });
+    }
+
+    return section;
+  }
+
   function mountCategories(anchorEl) {
     if (!isHome()) return null;
 
@@ -1422,9 +1651,10 @@
     mountFinder();
     var trust = mountTrust();
     var mr = mountMostRequested(trust);
-    var cats = mountCategories(mr || trust);
-    var faq = mountFaq(cats || mr || trust);
-    mountProof(faq || cats || mr || trust);
+    var est = mountEstimator(mr || trust);
+    var cats = mountCategories(est || mr || trust);
+    var faq = mountFaq(cats || est || mr || trust);
+    mountProof(faq || cats || est || mr || trust);
     mountMobile();
     mountDesktopRail();
     mountExitNudge();
@@ -1445,5 +1675,5 @@
   }
 })();
 /* BuildSaver deploy metadata */
-window.__BUILDSAVER_DEPLOY_BUILD_AT = "2026-04-13T04:47:42Z";
-window.__BUILDSAVER_DEPLOY_SOURCE_SHA = "19cec003d4fa2872eadfd6860908fde1a626edda";
+window.__BUILDSAVER_DEPLOY_BUILD_AT = "2026-04-13T05:00:28Z";
+window.__BUILDSAVER_DEPLOY_SOURCE_SHA = "947c261479262a390e07a625d89284d0839d89f9";
