@@ -94,6 +94,7 @@
     cats: "bsv-aio-cats",
     faq: "bsv-aio-faq",
     faqJson: "bsv-aio-faq-jsonld",
+    localSchema: "bsv-local-schema-jsonld",
     proof: "bsv-proof-section",
     mobile: "bsv-aio-mobile",
     drawerRoot: "bsv-qd-root",
@@ -137,6 +138,15 @@
   function callUrl() {
     var a = q('a[href^="tel:"]');
     return a && a.getAttribute("href") ? a.getAttribute("href") : CONFIG.fallbackCallHref;
+  }
+
+  function schemaPhoneNumber() {
+    var href = callUrl();
+    var n = String(href || "").replace(/^tel:/i, "").replace(/[^\d+]/g, "");
+    if (!n) return "";
+    if (n.charAt(0) === "+") return n;
+    if (n.length === 10) return "+1" + n;
+    return n;
   }
 
   function extractGa4IdFromText(text) {
@@ -521,7 +531,7 @@
   }
 
   function cleanup() {
-    var ids = [IDS.style, IDS.finder, IDS.trust, IDS.mostRequested, IDS.estimator, IDS.cats, IDS.faq, IDS.faqJson, IDS.proof, IDS.mobile, IDS.drawerRoot, IDS.desktopRail, IDS.exitNudge].concat(LEGACY_IDS);
+    var ids = [IDS.style, IDS.finder, IDS.trust, IDS.mostRequested, IDS.estimator, IDS.cats, IDS.faq, IDS.faqJson, IDS.localSchema, IDS.proof, IDS.mobile, IDS.drawerRoot, IDS.desktopRail, IDS.exitNudge].concat(LEGACY_IDS);
     ids.forEach(function (id) {
       var el = document.getElementById(id);
       if (el && el.parentNode) el.parentNode.removeChild(el);
@@ -1386,6 +1396,54 @@
     return faq;
   }
 
+  function mountLocalSchema() {
+    var phone = schemaPhoneNumber();
+    var orgId = "https://www.buildsaver.ca/#organization";
+    var contactPoint = {
+      "@type": "ContactPoint",
+      contactType: "sales",
+      email: "info@buildsaver.ca"
+    };
+    if (phone) contactPoint.telephone = phone;
+
+    var org = {
+      "@type": ["LocalBusiness", "BuildingMaterialsStore"],
+      "@id": orgId,
+      name: "BuildSaver",
+      url: "https://www.buildsaver.ca",
+      email: "info@buildsaver.ca",
+      address: {
+        "@type": "PostalAddress",
+        addressRegion: "ON",
+        addressCountry: "CA"
+      },
+      areaServed: [{ "@type": "AdministrativeArea", name: "Ontario" }],
+      contactPoint: [contactPoint],
+      knowsAbout: ["Drywall", "Insulation", "Roofing Materials", "Shingles"]
+    };
+    if (phone) org.telephone = phone;
+
+    var service = {
+      "@type": "Service",
+      "@id": "https://www.buildsaver.ca/#service-supply",
+      name: "Building Materials Supply and Quote Support",
+      serviceType: "Building Materials Supply",
+      provider: { "@id": orgId },
+      areaServed: [{ "@type": "AdministrativeArea", name: "Ontario" }],
+      availableChannel: [contactPoint],
+      url: "https://www.buildsaver.ca"
+    };
+
+    var s = document.createElement("script");
+    s.id = IDS.localSchema;
+    s.type = "application/ld+json";
+    s.text = JSON.stringify({
+      "@context": "https://schema.org",
+      "@graph": [org, service]
+    });
+    document.head.appendChild(s);
+  }
+
   function mountProof(anchorEl) {
     if (!isHome()) return null;
 
@@ -1654,6 +1712,7 @@
     var est = mountEstimator(mr || trust);
     var cats = mountCategories(est || mr || trust);
     var faq = mountFaq(cats || est || mr || trust);
+    mountLocalSchema();
     mountProof(faq || cats || est || mr || trust);
     mountMobile();
     mountDesktopRail();
@@ -1675,5 +1734,5 @@
   }
 })();
 /* BuildSaver deploy metadata */
-window.__BUILDSAVER_DEPLOY_BUILD_AT = "2026-04-13T05:00:28Z";
-window.__BUILDSAVER_DEPLOY_SOURCE_SHA = "947c261479262a390e07a625d89284d0839d89f9";
+window.__BUILDSAVER_DEPLOY_BUILD_AT = "2026-04-13T05:50:33Z";
+window.__BUILDSAVER_DEPLOY_SOURCE_SHA = "a898c3164c02d36c6f2aace2c4f0e2031f373041";
