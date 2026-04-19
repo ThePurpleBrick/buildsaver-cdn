@@ -2,11 +2,11 @@
   var APP_KEY = "__buildSaverAllInOneV9";
   var app = window[APP_KEY] || (window[APP_KEY] = {});
 
-  if (app.version === "v16" && typeof app.remount === "function") {
+  if (app.version === "v17" && typeof app.remount === "function") {
     app.remount();
     return;
   }
-  app.version = "v16";
+  app.version = "v17";
 
   var CONFIG = {
     ga4: {
@@ -45,6 +45,12 @@
       returnValue: "1",
       dedupeSessionPrefix: "bsv_quote_submit_seen"
     },
+    attribution: {
+      enabled: true,
+      storageKey: "bsv_attribution_v1",
+      maxValueLength: 160,
+      maxContextLength: 260
+    },
     fallbackCallHref: "tel:+14166667775",
     formViewUrl: "https://docs.google.com/forms/d/e/1FAIpQLSfhKnWlUOFMBLdqX7G_jm2SCunZ604NSQ0UAoZNSX7WtFf0CA/viewform",
     prefillEntries: {
@@ -54,7 +60,8 @@
       context: "1954630944",
       postal: "",
       serviceStatus: "",
-      estimate: ""
+      estimate: "",
+      attribution: ""
     },
     trust: [
       { t: "Fast Quote Turnaround", s: "Most requests answered within business hours." },
@@ -129,6 +136,13 @@
     "bsq-root", "bsq-boost-style", "bsq-fab", "bsq-overlay"
   ];
 
+  var ATTR_KEYS = [
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "gclid", "wbraid", "gbraid", "fbclid", "msclkid"
+  ];
+
+  var ATTR_CLICK_KEYS = ["gclid", "wbraid", "gbraid", "fbclid", "msclkid"];
+
   function q(sel, root) { return (root || document).querySelector(sel); }
   function qa(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
 
@@ -159,6 +173,302 @@
     if (n.charAt(0) === "+") return n;
     if (n.length === 10) return "+1" + n;
     return n;
+  }
+
+  function attributionEnabled() {
+    var cfg = CONFIG.attribution || {};
+    return cfg.enabled !== false;
+  }
+
+  function attributionStorageKey() {
+    var cfg = CONFIG.attribution || {};
+    var raw = String(cfg.storageKey || "bsv_attribution_v1").trim();
+    return raw || "bsv_attribution_v1";
+  }
+
+  function attributionMaxValueLength() {
+    var cfg = CONFIG.attribution || {};
+    var n = Number(cfg.maxValueLength);
+    if (!isFinite(n) || n < 40) return 160;
+    if (n > 300) return 300;
+    return Math.floor(n);
+  }
+
+  function attributionMaxContextLength() {
+    var cfg = CONFIG.attribution || {};
+    var n = Number(cfg.maxContextLength);
+    if (!isFinite(n) || n < 80) return 260;
+    if (n > 500) return 500;
+    return Math.floor(n);
+  }
+
+  function sanitizeAttributionValue(raw, forcedMax) {
+    var maxLen = Number(forcedMax);
+    if (!isFinite(maxLen) || maxLen < 1) maxLen = attributionMaxValueLength();
+
+    var val = String(raw || "").replace(/[\u0000-\u001f\u007f]/g, " ").trim();
+    if (!val) return "";
+    if (val.length > maxLen) val = val.slice(0, maxLen);
+    return val;
+  }
+
+  function hostFromUrl(raw) {
+    if (!raw) return "";
+    try {
+      return String(new URL(raw).hostname || "").toLowerCase().trim();
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function cleanAttributionTouch(raw) {
+    if (!raw || typeof raw !== "object") return null;
+
+    var out = {};
+    var i;
+
+    for (i = 0; i < ATTR_KEYS.length; i += 1) {
+      var key = ATTR_KEYS[i];
+      var val = sanitizeAttributionValue(raw[key]);
+      if (val) out[key] = val;
+    }
+
+    out.ts = sanitizeAttributionValue(raw.ts, 40) || new Date().toISOString();
+    out.page = sanitizeAttributionValue(raw.page, 320) || sanitizeAttributionValue(location.href, 320);
+    out.referrer = sanitizeAttributionValue(raw.referrer, 320);
+    out.referrerHost = sanitizeAttributionValue(raw.referrerHost, 120) || hostFromUrl(out.referrer);
+
+    if (!out.utm_source) {
+      if (out.referrerHost && out.referrerHost !== String(location.hostname || "").toLowerCase()) out.utm_source = out.referrerHost;
+      else out.utm_source = "(direct)";
+    }
+
+    if (!out.utm_medium) {
+      if (out.utm_source === "(direct)") out.utm_medium = "(none)";
+      else if (out.referrerHost) out.utm_medium = "referral";
+    }
+
+    return out;
+  }
+
+  function hasAttributionValues(obj) {
+    if (!obj || typeof obj !== "object") return false;
+    return Object.keys(obj).length > 0;
+  }
+
+  function readAttributionStoredState(key) {
+    var raw = "";
+    try { raw = localStorage.getItem(key) || ""; } catch (e) {}
+    if (!raw) {
+      try { raw = sessionStorage.getItem(key) || ""; } catch (e2) {}
+    }
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch (e3) {
+      return null;
+    }
+  }
+
+  function writeAttributionStoredState(key, state) {
+    var serialized = "";
+    try { serialized = JSON.stringify(state || {}); } catch (e) { return; }
+
+    try { localStorage.setItem(key, serialized); return; } catch (e2) {}
+    try { sessionStorage.setItem(key, serialized); } catch (e3) {}
+  }
+
+  function parseAttributionFromQuery() {
+    var out = {};
+    var hasTracked = false;
+    var qs;
+    var i;
+
+    try {
+      qs = new URLSearchParams(location.search || "");
+    } catch (e) {
+      return { values: out, hasTracked: false };
+    }
+
+    for (i = 0; i < ATTR_KEYS.length; i += 1) {
+      var key = ATTR_KEYS[i];
+      var val = sanitizeAttributionValue(qs.get(key));
+      if (!val) continue;
+      out[key] = val;
+      hasTracked = true;
+    }
+
+    return { values: out, hasTracked: hasTracked };
+  }
+
+  function buildCurrentAttributionTouch() {
+    var query = parseAttributionFromQuery();
+    var referrer = sanitizeAttributionValue(document.referrer, 320);
+    var referrerHost = hostFromUrl(referrer);
+    var siteHost = String(location.hostname || "").toLowerCase();
+    var externalReferrer = !!(referrerHost && referrerHost !== siteHost);
+
+    var touch = Object.assign({
+      ts: new Date().toISOString(),
+      page: sanitizeAttributionValue(location.href, 320),
+      referrer: referrer,
+      referrerHost: referrerHost
+    }, query.values || {});
+
+    return {
+      touch: cleanAttributionTouch(touch),
+      hasTracked: !!query.hasTracked,
+      externalReferrer: externalReferrer
+    };
+  }
+
+  function normalizeAttributionState(raw) {
+    var input = (raw && typeof raw === "object") ? raw : {};
+    var firstTouch = cleanAttributionTouch(input.firstTouch);
+    var lastTouch = cleanAttributionTouch(input.lastTouch);
+
+    if (!hasAttributionValues(firstTouch) && hasAttributionValues(lastTouch)) firstTouch = lastTouch;
+    if (!hasAttributionValues(lastTouch) && hasAttributionValues(firstTouch)) lastTouch = firstTouch;
+
+    return {
+      version: 1,
+      storageKey: attributionStorageKey(),
+      firstTouch: firstTouch || {},
+      lastTouch: lastTouch || {},
+      updatedAt: sanitizeAttributionValue(input.updatedAt, 40)
+    };
+  }
+
+  function initAttribution() {
+    if (app.attributionInitialized) return;
+
+    if (!attributionEnabled()) {
+      app.attributionState = normalizeAttributionState(null);
+      app.attributionInitialized = true;
+      return;
+    }
+
+    var key = attributionStorageKey();
+    var stored = readAttributionStoredState(key);
+    var state = normalizeAttributionState(stored);
+    var current = buildCurrentAttributionTouch();
+    var qualifies = !!(current.hasTracked || current.externalReferrer);
+
+    if (!hasAttributionValues(state.firstTouch)) state.firstTouch = current.touch || {};
+    if (qualifies) state.lastTouch = current.touch || {};
+    if (!hasAttributionValues(state.lastTouch)) state.lastTouch = state.firstTouch || {};
+
+    state.storageKey = key;
+    state.updatedAt = new Date().toISOString();
+
+    app.attributionState = state;
+    writeAttributionStoredState(key, state);
+    app.attributionInitialized = true;
+  }
+
+  function getAttributionState() {
+    initAttribution();
+    return app.attributionState || normalizeAttributionState(null);
+  }
+
+  function getActiveAttributionTouch() {
+    var state = getAttributionState();
+    if (hasAttributionValues(state.lastTouch)) return state.lastTouch;
+    if (hasAttributionValues(state.firstTouch)) return state.firstTouch;
+    return cleanAttributionTouch({});
+  }
+
+  function pickPrimaryClick(touch) {
+    var i;
+    var source = touch || {};
+    for (i = 0; i < ATTR_CLICK_KEYS.length; i += 1) {
+      var key = ATTR_CLICK_KEYS[i];
+      var value = sanitizeAttributionValue(source[key]);
+      if (!value) continue;
+      return { key: key, value: value };
+    }
+    return { key: "", value: "" };
+  }
+
+  function summarizeAttribution(touch) {
+    var src = touch || {};
+    var parts = [];
+    var click = pickPrimaryClick(src);
+
+    if (src.utm_source) parts.push("src=" + src.utm_source);
+    if (src.utm_medium) parts.push("med=" + src.utm_medium);
+    if (src.utm_campaign) parts.push("camp=" + src.utm_campaign);
+    if (src.utm_term) parts.push("term=" + src.utm_term);
+    if (src.utm_content) parts.push("content=" + src.utm_content);
+    if (click.value) parts.push("click=" + click.key + ":" + click.value);
+    if (src.referrerHost) parts.push("ref=" + src.referrerHost);
+
+    var text = parts.join(", ");
+    return sanitizeAttributionValue(text, attributionMaxContextLength());
+  }
+
+  function attributionContextFields(ctx) {
+    var fromCtx = (ctx && typeof ctx === "object") ? ctx : {};
+    var touch = getActiveAttributionTouch();
+    var click = pickPrimaryClick(touch);
+
+    var source = sanitizeAttributionValue(fromCtx.attributionSource) || sanitizeAttributionValue(touch.utm_source);
+    var medium = sanitizeAttributionValue(fromCtx.attributionMedium) || sanitizeAttributionValue(touch.utm_medium);
+    var campaign = sanitizeAttributionValue(fromCtx.attributionCampaign) || sanitizeAttributionValue(touch.utm_campaign);
+    var term = sanitizeAttributionValue(fromCtx.attributionTerm) || sanitizeAttributionValue(touch.utm_term);
+    var content = sanitizeAttributionValue(fromCtx.attributionContent) || sanitizeAttributionValue(touch.utm_content);
+    var clickId = sanitizeAttributionValue(fromCtx.attributionClickId) || sanitizeAttributionValue(click.value);
+    var clickType = sanitizeAttributionValue(fromCtx.attributionClickType) || sanitizeAttributionValue(click.key);
+    var referrerHost = sanitizeAttributionValue(fromCtx.attributionReferrerHost) || sanitizeAttributionValue(touch.referrerHost);
+
+    var summary = sanitizeAttributionValue(fromCtx.attributionSummary, attributionMaxContextLength());
+    if (!summary) {
+      summary = summarizeAttribution({
+        utm_source: source,
+        utm_medium: medium,
+        utm_campaign: campaign,
+        utm_term: term,
+        utm_content: content,
+        referrerHost: referrerHost,
+        gclid: clickType === "gclid" ? clickId : "",
+        wbraid: clickType === "wbraid" ? clickId : "",
+        gbraid: clickType === "gbraid" ? clickId : "",
+        fbclid: clickType === "fbclid" ? clickId : "",
+        msclkid: clickType === "msclkid" ? clickId : ""
+      });
+    }
+
+    return {
+      attributionSource: source,
+      attributionMedium: medium,
+      attributionCampaign: campaign,
+      attributionTerm: term,
+      attributionContent: content,
+      attributionClickId: clickId,
+      attributionClickType: clickType,
+      attributionReferrerHost: referrerHost,
+      attributionSummary: summary
+    };
+  }
+
+  function withAttributionContext(ctx) {
+    var base = (ctx && typeof ctx === "object") ? Object.assign({}, ctx) : {};
+    return Object.assign(base, attributionContextFields(base));
+  }
+
+  function attributionEventParams(ctx) {
+    var source = withAttributionContext(ctx || app.quoteContext || {});
+    var out = {};
+
+    if (source.attributionSource) out.attr_source = source.attributionSource;
+    if (source.attributionMedium) out.attr_medium = source.attributionMedium;
+    if (source.attributionCampaign) out.attr_campaign = source.attributionCampaign;
+    if (source.attributionTerm) out.attr_term = source.attributionTerm;
+    if (source.attributionContent) out.attr_content = source.attributionContent;
+    if (source.attributionClickType) out.attr_click_type = source.attributionClickType;
+    if (source.attributionClickId) out.attr_click_id = source.attributionClickId;
+    if (source.attributionReferrerHost) out.attr_referrer_host = source.attributionReferrerHost;
+    return out;
   }
 
   function readPath(obj, path) {
@@ -475,6 +785,8 @@
 
   function getAnalyticsState() {
     var svc = getServiceAreaState();
+    var attr = getAttributionState();
+    var activeTouch = getActiveAttributionTouch();
     return {
       measurementId: app.ga4MeasurementId || "",
       analyticsReady: !!app.analyticsReady,
@@ -484,22 +796,26 @@
       serviceAreaEnabled: serviceAreaEnabled(),
       serviceAreaChecked: !!svc.checked,
       serviceAreaQualified: !!svc.qualified,
-      serviceAreaFsa: svc.fsa || ""
+      serviceAreaFsa: svc.fsa || "",
+      attributionStorageKey: attr.storageKey || "",
+      attributionFirstTouch: attr.firstTouch || {},
+      attributionLastTouch: attr.lastTouch || {},
+      attributionActiveTouch: activeTouch || {}
     };
   }
 
   function markQuoteSubmitted(method, ctx) {
-    var payloadCtx = ctx || {};
-    var activeCtx = app.quoteContext || {};
+    var payloadCtx = withAttributionContext(ctx || {});
+    var activeCtx = withAttributionContext(app.quoteContext || {});
     var svc = getServiceAreaState();
 
-    trackEvent("bs_quote_submit", {
+    trackEvent("bs_quote_submit", Object.assign({
       method: method || "unspecified",
       source: payloadCtx.source || activeCtx.source || "Website",
       product: payloadCtx.product || activeCtx.product || "General",
       service_qualified: activeCtx.serviceQualified === true ? "yes" : (activeCtx.serviceQualified === false ? "no" : "unknown"),
       postal_fsa: svc.fsa || ""
-    });
+    }, attributionEventParams(payloadCtx)));
   }
 
   function hasReturnSubmitSignal() {
@@ -620,7 +936,7 @@
   }
 
   function applyServiceAreaGate() {
-    app.quoteContext = app.quoteContext || { product: "", source: "Website", page: location.href, ts: new Date().toISOString() };
+    app.quoteContext = withAttributionContext(app.quoteContext || { product: "", source: "Website", page: location.href, ts: new Date().toISOString() });
 
     var qualWrap = q("#bsv-qd-qual");
     var input = q("#bsv-qd-postal");
@@ -689,24 +1005,28 @@
     var p = CONFIG.prefillEntries || {};
     var contextLines = [];
     var serviceStatus = "";
+    var withAttr = withAttributionContext(ctx || {});
+    var attributionSummary = withAttr.attributionSummary || "";
 
-    if (p.product && ctx.product) params.push("entry." + p.product + "=" + encodeURIComponent(ctx.product));
-    if (p.source && ctx.source) params.push("entry." + p.source + "=" + encodeURIComponent(ctx.source));
-    if (p.page && ctx.page) params.push("entry." + p.page + "=" + encodeURIComponent(ctx.page));
-    if (p.postal && ctx.postal) params.push("entry." + p.postal + "=" + encodeURIComponent(ctx.postal));
-    if (p.estimate && ctx.estimateSummary) params.push("entry." + p.estimate + "=" + encodeURIComponent(ctx.estimateSummary));
+    if (p.product && withAttr.product) params.push("entry." + p.product + "=" + encodeURIComponent(withAttr.product));
+    if (p.source && withAttr.source) params.push("entry." + p.source + "=" + encodeURIComponent(withAttr.source));
+    if (p.page && withAttr.page) params.push("entry." + p.page + "=" + encodeURIComponent(withAttr.page));
+    if (p.postal && withAttr.postal) params.push("entry." + p.postal + "=" + encodeURIComponent(withAttr.postal));
+    if (p.estimate && withAttr.estimateSummary) params.push("entry." + p.estimate + "=" + encodeURIComponent(withAttr.estimateSummary));
+    if (p.attribution && attributionSummary) params.push("entry." + p.attribution + "=" + encodeURIComponent(attributionSummary));
 
-    if (ctx.serviceQualified === true) serviceStatus = "Qualified";
-    else if (ctx.serviceQualified === false) serviceStatus = "Outside Standard Area";
+    if (withAttr.serviceQualified === true) serviceStatus = "Qualified";
+    else if (withAttr.serviceQualified === false) serviceStatus = "Outside Standard Area";
     if (p.serviceStatus && serviceStatus) params.push("entry." + p.serviceStatus + "=" + encodeURIComponent(serviceStatus));
 
-    if (ctx.product) contextLines.push("Product: " + ctx.product);
-    if (ctx.source) contextLines.push("Source: " + ctx.source);
-    if (ctx.page) contextLines.push("Page: " + ctx.page);
-    if (ctx.ts) contextLines.push("Time: " + ctx.ts);
-    if (ctx.postal) contextLines.push("Postal: " + ctx.postal);
+    if (withAttr.product) contextLines.push("Product: " + withAttr.product);
+    if (withAttr.source) contextLines.push("Source: " + withAttr.source);
+    if (withAttr.page) contextLines.push("Page: " + withAttr.page);
+    if (withAttr.ts) contextLines.push("Time: " + withAttr.ts);
+    if (withAttr.postal) contextLines.push("Postal: " + withAttr.postal);
     if (serviceStatus) contextLines.push("Service Area: " + serviceStatus);
-    if (ctx.estimateSummary) contextLines.push("Estimate: " + ctx.estimateSummary);
+    if (withAttr.estimateSummary) contextLines.push("Estimate: " + withAttr.estimateSummary);
+    if (attributionSummary) contextLines.push("Attribution: " + attributionSummary);
     if (p.context && contextLines.length) {
       params.push("entry." + p.context + "=" + encodeURIComponent(contextLines.join(" | ")));
     }
@@ -767,12 +1087,12 @@
       else source = "Website";
     }
 
-    return {
+    return withAttributionContext({
       product: product,
       source: source,
       page: location.href,
       ts: new Date().toISOString()
-    };
+    });
   }
 
   function cleanup() {
@@ -957,13 +1277,25 @@
     var openNew = q("#bsv-qd-open-new");
     var contextText = q("#bsv-qd-context-text");
 
-    var ctx = ctxOverride || app.quoteContext || {};
-    app.quoteContext = {
+    var ctx = withAttributionContext(ctxOverride || app.quoteContext || {});
+    app.quoteContext = withAttributionContext({
       product: ctx.product || "",
       source: ctx.source || "Website",
       page: ctx.page || location.href,
-      ts: ctx.ts || new Date().toISOString()
-    };
+      ts: ctx.ts || new Date().toISOString(),
+      postal: ctx.postal || "",
+      serviceQualified: typeof ctx.serviceQualified === "boolean" ? ctx.serviceQualified : undefined,
+      estimateSummary: ctx.estimateSummary || "",
+      attributionSource: ctx.attributionSource || "",
+      attributionMedium: ctx.attributionMedium || "",
+      attributionCampaign: ctx.attributionCampaign || "",
+      attributionTerm: ctx.attributionTerm || "",
+      attributionContent: ctx.attributionContent || "",
+      attributionClickId: ctx.attributionClickId || "",
+      attributionClickType: ctx.attributionClickType || "",
+      attributionReferrerHost: ctx.attributionReferrerHost || "",
+      attributionSummary: ctx.attributionSummary || ""
+    });
     app.quoteSession = {
       iframeLoads: 0,
       submitted: false,
@@ -984,11 +1316,11 @@
     }
     applyServiceAreaGate();
 
-    trackEvent("bs_quote_open", {
+    trackEvent("bs_quote_open", Object.assign({
       source: app.quoteContext.source || "Website",
       product: app.quoteContext.product || "General",
       service_qualified: app.quoteContext.serviceQualified === true ? "yes" : (app.quoteContext.serviceQualified === false ? "no" : "unknown")
-    });
+    }, attributionEventParams(app.quoteContext)));
 
     if (overlay) {
       overlay.classList.add("open");
@@ -1119,7 +1451,8 @@
           "Page: " + (ctx.page || location.href),
           "Time: " + (ctx.ts || new Date().toISOString()),
           "Postal: " + (ctx.postal || "Not provided"),
-          "Service Area: " + serviceLabel
+          "Service Area: " + serviceLabel,
+          "Attribution: " + (ctx.attributionSummary || "Not captured")
         ].join("\n");
 
         if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -1149,11 +1482,11 @@
           return;
         }
 
-        trackEvent("bs_quote_open_new_tab", {
+        trackEvent("bs_quote_open_new_tab", Object.assign({
           source: ctx.source || "Website",
           product: ctx.product || "General",
           postal_fsa: state.fsa || ""
-        });
+        }, attributionEventParams(ctx)));
       });
     }
 
@@ -1516,13 +1849,13 @@
         if (!estimate) runEstimate(true);
         if (!estimate) return;
 
-        app.quoteContext = {
+        app.quoteContext = withAttributionContext({
           product: estimate.product,
           source: "Estimator",
           page: location.href,
           ts: new Date().toISOString(),
           estimateSummary: estimate.summary
-        };
+        });
 
         trackEvent("bs_estimator_quote_start", {
           source: "Estimator",
@@ -2003,15 +2336,17 @@
   function mountAll() {
     cleanup();
     injectStyle();
+    initAttribution();
     initAnalytics();
     captureReturnSubmitSignal();
     window.BUILDSAVER_ANALYTICS = window.BUILDSAVER_ANALYTICS || {};
     window.BUILDSAVER_ANALYTICS.getState = getAnalyticsState;
+    window.BUILDSAVER_ANALYTICS.getAttribution = getAttributionState;
     window.BUILDSAVER_ANALYTICS.track = trackEvent;
     window.BUILDSAVER_ANALYTICS.markQuoteSubmitted = markQuoteSubmitted;
     bindGlobalCapture();
 
-    app.quoteContext = { product: "", source: "Website", page: location.href, ts: new Date().toISOString() };
+    app.quoteContext = withAttributionContext({ product: "", source: "Website", page: location.href, ts: new Date().toISOString() });
 
     mountQuoteDrawer();
     mountFinder();
@@ -2042,5 +2377,5 @@
   }
 })();
 /* BuildSaver deploy metadata */
-window.__BUILDSAVER_DEPLOY_BUILD_AT = "2026-04-15T04:51:40Z";
-window.__BUILDSAVER_DEPLOY_SOURCE_SHA = "28f3350196d700bb4eb922f66bae63a2a351d075";
+window.__BUILDSAVER_DEPLOY_BUILD_AT = "2026-04-19T03:16:17Z";
+window.__BUILDSAVER_DEPLOY_SOURCE_SHA = "20ceda2d1d5d4119da3849c38c12369f4ed433ae";
