@@ -44,6 +44,9 @@ jobs:
       - name: Build and validate source assets
         run: |
           set -euo pipefail
+          CURRENT_CDN_SOURCE_SHA="$(node -e 'const fs=require("fs");try{const d=JSON.parse(fs.readFileSync("deploy-manifest.json","utf8"));process.stdout.write(String(d.sourceSha||"").trim());}catch(e){process.stdout.write("");}')"
+          echo "CURRENT_CDN_SOURCE_SHA=${CURRENT_CDN_SOURCE_SHA}" >> "$GITHUB_ENV"
+
           cd source-repo
           SOURCE_SHA="$(git rev-parse HEAD)"
           echo "SOURCE_SHA=${SOURCE_SHA}" >> "$GITHUB_ENV"
@@ -68,6 +71,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+
+          if [ "${CURRENT_CDN_SOURCE_SHA:-}" = "${SOURCE_SHA}" ] && [ -n "${SOURCE_SHA}" ]; then
+            echo "CDN main already serves source SHA ${SOURCE_SHA}; skipping no-op publish."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           existing_pr_url="$(gh pr list --state open --search "sync CDN assets ${SOURCE_SHA} in:title" --json url --jq 'if length > 0 then .[0].url else "" end')"
           if [ -n "$existing_pr_url" ]; then
