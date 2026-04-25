@@ -9,4 +9,5 @@ Auto-published assets for BuildSaver Squarespace 7.1 footer deployment.
 
 ## Safety
 - Integrity checks run in `.github/workflows/cdn-integrity-guardrails.yml`.
+- Secret scanning runs in `.github/workflows/secret-scan-guardrails.yml`.
 - See `SECURITY.md` for reporting and policy.
