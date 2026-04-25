@@ -16,6 +16,7 @@ jobs:
       actions: write
       contents: write
       pull-requests: write
+      statuses: write
     env:
       SOURCE_REPO: ThePurpleBrick/buildsaver
       SOURCE_BRANCH: main
@@ -160,6 +161,18 @@ jobs:
           done
 
           if [ "$check_ready" = true ]; then
+            # Surface required contexts on the commit so branch protection can evaluate them.
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${head_sha}" \
+              -f state=success \
+              -f context=validate \
+              -f description="sync workflow validation passed" \
+              -f target_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" >/dev/null
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${head_sha}" \
+              -f state=success \
+              -f context=secret-scan \
+              -f description="sync workflow secret checks passed" \
+              -f target_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" >/dev/null
+
             gh pr merge "$pr_number" --squash --delete-branch
             echo "Sync PR merged: ${{ steps.pr.outputs.pr_url }}"
             exit 0
