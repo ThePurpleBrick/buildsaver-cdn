@@ -2,11 +2,11 @@
   var APP_KEY = "__buildSaverAllInOneV9";
   var app = window[APP_KEY] || (window[APP_KEY] = {});
 
-  if (app.version === "v17" && typeof app.remount === "function") {
+  if (app.version === "v18" && typeof app.remount === "function") {
     app.remount();
     return;
   }
-  app.version = "v17";
+  app.version = "v18";
 
   var CONFIG = {
     ga4: {
@@ -27,6 +27,17 @@
       defaultWidthFt: 12,
       defaultWastePctDrywall: 12,
       defaultWastePctInsulation: 8
+    },
+    urgency: {
+      enabled: true,
+      defaultValue: "7plus",
+      hotThresholdDays: 3
+    },
+    uploads: {
+      enabled: true,
+      maxFiles: 3,
+      maxFileSizeMb: 25,
+      allowedExtensions: ["pdf", "csv", "xls", "xlsx", "jpg", "jpeg", "png", "webp", "dwg", "dxf"]
     },
     reviews: {
       enabled: true,
@@ -61,7 +72,10 @@
       postal: "",
       serviceStatus: "",
       estimate: "",
-      attribution: ""
+      attribution: "",
+      needBy: "",
+      priority: "",
+      upload: ""
     },
     trust: [
       { t: "Fast Quote Turnaround", s: "Most requests answered within business hours." },
@@ -142,6 +156,12 @@
   ];
 
   var ATTR_CLICK_KEYS = ["gclid", "wbraid", "gbraid", "fbclid", "msclkid"];
+
+  var DEFAULT_URGENCY_OPTIONS = [
+    { value: "24h", label: "Need in 24 hours", days: 1 },
+    { value: "3d", label: "Need in 3 days", days: 3 },
+    { value: "7plus", label: "Need in 7+ days", days: 7 }
+  ];
 
   function q(sel, root) { return (root || document).querySelector(sel); }
   function qa(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
@@ -471,6 +491,223 @@
     return out;
   }
 
+  function urgencyEnabled() {
+    var cfg = CONFIG.urgency || {};
+    return cfg.enabled !== false;
+  }
+
+  function urgencyHotThresholdDays() {
+    var cfg = CONFIG.urgency || {};
+    var n = Number(cfg.hotThresholdDays);
+    if (!isFinite(n) || n < 1) return 3;
+    if (n > 14) return 14;
+    return Math.floor(n);
+  }
+
+  function urgencyOptions() {
+    return DEFAULT_URGENCY_OPTIONS.slice();
+  }
+
+  function resolveUrgencyMeta(rawValue) {
+    var options = urgencyOptions();
+    var cfg = CONFIG.urgency || {};
+    var value = String(rawValue || "").trim();
+    var defaultValue = String(cfg.defaultValue || "7plus").trim();
+    var selected = null;
+    var i;
+
+    for (i = 0; i < options.length; i += 1) {
+      if (options[i].value === value) {
+        selected = options[i];
+        break;
+      }
+    }
+    if (!selected) {
+      for (i = 0; i < options.length; i += 1) {
+        if (options[i].value === defaultValue) {
+          selected = options[i];
+          break;
+        }
+      }
+    }
+    if (!selected) selected = options[options.length - 1];
+
+    var isHot = selected.days <= urgencyHotThresholdDays();
+    return {
+      value: selected.value,
+      label: selected.label,
+      days: selected.days,
+      isHot: isHot,
+      priority: isHot ? "Hot" : "Standard"
+    };
+  }
+
+  function urgencyContextFields(ctx) {
+    if (!urgencyEnabled()) {
+      return {
+        needByValue: "",
+        needByLabel: "",
+        urgencyDays: 0,
+        leadPriority: "Standard"
+      };
+    }
+
+    var source = (ctx && typeof ctx === "object") ? ctx : {};
+    var meta = resolveUrgencyMeta(source.needByValue || source.needBy || "");
+    return {
+      needByValue: meta.value,
+      needByLabel: meta.label,
+      urgencyDays: meta.days,
+      leadPriority: meta.priority
+    };
+  }
+
+  function uploadsEnabled() {
+    var cfg = CONFIG.uploads || {};
+    return cfg.enabled !== false;
+  }
+
+  function uploadConfig() {
+    var cfg = CONFIG.uploads || {};
+    var maxFiles = Number(cfg.maxFiles);
+    var maxFileSizeMb = Number(cfg.maxFileSizeMb);
+    var allowed = Array.isArray(cfg.allowedExtensions) ? cfg.allowedExtensions : [];
+
+    if (!isFinite(maxFiles) || maxFiles < 1) maxFiles = 3;
+    if (maxFiles > 8) maxFiles = 8;
+
+    if (!isFinite(maxFileSizeMb) || maxFileSizeMb < 1) maxFileSizeMb = 25;
+    if (maxFileSizeMb > 250) maxFileSizeMb = 250;
+
+    allowed = allowed.map(function (x) {
+      return String(x || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    }).filter(Boolean);
+
+    if (!allowed.length) {
+      allowed = ["pdf", "csv", "xls", "xlsx", "jpg", "jpeg", "png", "webp", "dwg", "dxf"];
+    }
+
+    return {
+      maxFiles: Math.floor(maxFiles),
+      maxFileSizeBytes: Math.floor(maxFileSizeMb * 1024 * 1024),
+      maxFileSizeMb: maxFileSizeMb,
+      allowedExtensions: allowed
+    };
+  }
+
+  function uploadExtension(name) {
+    var raw = String(name || "");
+    var idx = raw.lastIndexOf(".");
+    if (idx < 0) return "";
+    return raw.slice(idx + 1).toLowerCase().replace(/[^a-z0-9]/g, "");
+  }
+
+  function normalizeUploadLink(raw) {
+    return sanitizeAttributionValue(String(raw || "").trim(), 320);
+  }
+
+  function normalizeUploadFiles(rawFiles) {
+    var cfg = uploadConfig();
+    var list = Array.isArray(rawFiles) ? rawFiles : [];
+    return list.map(function (entry) {
+      var name = sanitizeAttributionValue((entry && (entry.name || entry.fileName)) || "", 80);
+      var sizeBytes = Number(entry && (entry.sizeBytes || entry.size || 0));
+      if (!isFinite(sizeBytes) || sizeBytes < 0) sizeBytes = 0;
+      var ext = uploadExtension(name);
+      return { name: name, sizeBytes: Math.floor(sizeBytes), ext: ext };
+    }).filter(function (entry) {
+      return !!entry.name;
+    }).slice(0, cfg.maxFiles);
+  }
+
+  function formatFileSize(bytes) {
+    var n = Number(bytes);
+    if (!isFinite(n) || n <= 0) return "";
+    var mb = n / (1024 * 1024);
+    if (mb < 0.1) return "<0.1 MB";
+    return mb.toFixed(mb >= 10 ? 0 : 1) + " MB";
+  }
+
+  function buildUploadSummary(files, link) {
+    var cleanFiles = normalizeUploadFiles(files || []);
+    var cleanLink = normalizeUploadLink(link);
+    var parts = [];
+
+    if (cleanFiles.length) {
+      var names = cleanFiles.map(function (f) {
+        var size = formatFileSize(f.sizeBytes);
+        return size ? (f.name + " (" + size + ")") : f.name;
+      }).join(", ");
+      parts.push("Files: " + names);
+    }
+    if (cleanLink) parts.push("Link: " + cleanLink);
+
+    return sanitizeAttributionValue(parts.join(" | "), 320);
+  }
+
+  function getUploadState() {
+    if (!app.uploadState) {
+      app.uploadState = {
+        files: [],
+        link: "",
+        rejected: []
+      };
+    }
+    return app.uploadState;
+  }
+
+  function setUploadState(next) {
+    app.uploadState = Object.assign(getUploadState(), next || {});
+    return app.uploadState;
+  }
+
+  function uploadContextFields(ctx) {
+    if (!uploadsEnabled()) {
+      return {
+        uploadFiles: [],
+        uploadCount: 0,
+        uploadLink: "",
+        uploadSummary: ""
+      };
+    }
+
+    var source = (ctx && typeof ctx === "object") ? ctx : {};
+    var fallback = getUploadState();
+
+    var files = normalizeUploadFiles(source.uploadFiles);
+    if (!files.length && Array.isArray(fallback.files)) files = normalizeUploadFiles(fallback.files);
+
+    var link = normalizeUploadLink(source.uploadLink);
+    if (!link) link = normalizeUploadLink(fallback.link);
+
+    var summary = sanitizeAttributionValue(source.uploadSummary, 320);
+    if (!summary) summary = buildUploadSummary(files, link);
+
+    return {
+      uploadFiles: files,
+      uploadCount: files.length,
+      uploadLink: link,
+      uploadSummary: summary
+    };
+  }
+
+  function withQuoteContext(ctx) {
+    var base = withAttributionContext(ctx || {});
+    return Object.assign(base, urgencyContextFields(base), uploadContextFields(base));
+  }
+
+  function quoteSignalEventParams(ctx) {
+    var source = withQuoteContext(ctx || app.quoteContext || {});
+    var out = {
+      lead_priority: source.leadPriority || "Standard",
+      need_by: source.needByValue || "",
+      need_by_label: source.needByLabel || "",
+      upload_count: Number(source.uploadCount) || 0
+    };
+    if (source.uploadLink) out.has_upload_link = "yes";
+    return out;
+  }
+
   function readPath(obj, path) {
     var cur = obj;
     var parts = String(path || "").split(".");
@@ -787,6 +1024,7 @@
     var svc = getServiceAreaState();
     var attr = getAttributionState();
     var activeTouch = getActiveAttributionTouch();
+    var ctx = withQuoteContext(app.quoteContext || {});
     return {
       measurementId: app.ga4MeasurementId || "",
       analyticsReady: !!app.analyticsReady,
@@ -800,13 +1038,16 @@
       attributionStorageKey: attr.storageKey || "",
       attributionFirstTouch: attr.firstTouch || {},
       attributionLastTouch: attr.lastTouch || {},
-      attributionActiveTouch: activeTouch || {}
+      attributionActiveTouch: activeTouch || {},
+      leadPriority: ctx.leadPriority || "Standard",
+      needByValue: ctx.needByValue || "",
+      uploadCount: Number(ctx.uploadCount) || 0
     };
   }
 
   function markQuoteSubmitted(method, ctx) {
-    var payloadCtx = withAttributionContext(ctx || {});
-    var activeCtx = withAttributionContext(app.quoteContext || {});
+    var payloadCtx = withQuoteContext(ctx || {});
+    var activeCtx = withQuoteContext(app.quoteContext || {});
     var svc = getServiceAreaState();
 
     trackEvent("bs_quote_submit", Object.assign({
@@ -815,7 +1056,7 @@
       product: payloadCtx.product || activeCtx.product || "General",
       service_qualified: activeCtx.serviceQualified === true ? "yes" : (activeCtx.serviceQualified === false ? "no" : "unknown"),
       postal_fsa: svc.fsa || ""
-    }, attributionEventParams(payloadCtx)));
+    }, quoteSignalEventParams(payloadCtx), attributionEventParams(payloadCtx)));
   }
 
   function hasReturnSubmitSignal() {
@@ -936,7 +1177,7 @@
   }
 
   function applyServiceAreaGate() {
-    app.quoteContext = withAttributionContext(app.quoteContext || { product: "", source: "Website", page: location.href, ts: new Date().toISOString() });
+    app.quoteContext = withQuoteContext(app.quoteContext || { product: "", source: "Website", page: location.href, ts: new Date().toISOString() });
 
     var qualWrap = q("#bsv-qd-qual");
     var input = q("#bsv-qd-postal");
@@ -957,7 +1198,7 @@
       }
       if (frame) {
         var directSrc = formEmbedUrl(app.quoteContext || {});
-        if ((frame.getAttribute("src") || "") !== directSrc) frame.setAttribute("src", directSrc);
+        if (!(frame.getAttribute("src") || "")) frame.setAttribute("src", directSrc);
       }
       return;
     }
@@ -985,7 +1226,7 @@
       }
       if (frame) {
         var src = formEmbedUrl(app.quoteContext || {});
-        if ((frame.getAttribute("src") || "") !== src) frame.setAttribute("src", src);
+        if (!(frame.getAttribute("src") || "")) frame.setAttribute("src", src);
       }
       return;
     }
@@ -1005,27 +1246,33 @@
     var p = CONFIG.prefillEntries || {};
     var contextLines = [];
     var serviceStatus = "";
-    var withAttr = withAttributionContext(ctx || {});
-    var attributionSummary = withAttr.attributionSummary || "";
+    var withMeta = withQuoteContext(ctx || {});
+    var attributionSummary = withMeta.attributionSummary || "";
 
-    if (p.product && withAttr.product) params.push("entry." + p.product + "=" + encodeURIComponent(withAttr.product));
-    if (p.source && withAttr.source) params.push("entry." + p.source + "=" + encodeURIComponent(withAttr.source));
-    if (p.page && withAttr.page) params.push("entry." + p.page + "=" + encodeURIComponent(withAttr.page));
-    if (p.postal && withAttr.postal) params.push("entry." + p.postal + "=" + encodeURIComponent(withAttr.postal));
-    if (p.estimate && withAttr.estimateSummary) params.push("entry." + p.estimate + "=" + encodeURIComponent(withAttr.estimateSummary));
+    if (p.product && withMeta.product) params.push("entry." + p.product + "=" + encodeURIComponent(withMeta.product));
+    if (p.source && withMeta.source) params.push("entry." + p.source + "=" + encodeURIComponent(withMeta.source));
+    if (p.page && withMeta.page) params.push("entry." + p.page + "=" + encodeURIComponent(withMeta.page));
+    if (p.postal && withMeta.postal) params.push("entry." + p.postal + "=" + encodeURIComponent(withMeta.postal));
+    if (p.estimate && withMeta.estimateSummary) params.push("entry." + p.estimate + "=" + encodeURIComponent(withMeta.estimateSummary));
     if (p.attribution && attributionSummary) params.push("entry." + p.attribution + "=" + encodeURIComponent(attributionSummary));
+    if (p.needBy && withMeta.needByLabel) params.push("entry." + p.needBy + "=" + encodeURIComponent(withMeta.needByLabel));
+    if (p.priority && withMeta.leadPriority) params.push("entry." + p.priority + "=" + encodeURIComponent(withMeta.leadPriority));
+    if (p.upload && withMeta.uploadSummary) params.push("entry." + p.upload + "=" + encodeURIComponent(withMeta.uploadSummary));
 
-    if (withAttr.serviceQualified === true) serviceStatus = "Qualified";
-    else if (withAttr.serviceQualified === false) serviceStatus = "Outside Standard Area";
+    if (withMeta.serviceQualified === true) serviceStatus = "Qualified";
+    else if (withMeta.serviceQualified === false) serviceStatus = "Outside Standard Area";
     if (p.serviceStatus && serviceStatus) params.push("entry." + p.serviceStatus + "=" + encodeURIComponent(serviceStatus));
 
-    if (withAttr.product) contextLines.push("Product: " + withAttr.product);
-    if (withAttr.source) contextLines.push("Source: " + withAttr.source);
-    if (withAttr.page) contextLines.push("Page: " + withAttr.page);
-    if (withAttr.ts) contextLines.push("Time: " + withAttr.ts);
-    if (withAttr.postal) contextLines.push("Postal: " + withAttr.postal);
+    if (withMeta.product) contextLines.push("Product: " + withMeta.product);
+    if (withMeta.source) contextLines.push("Source: " + withMeta.source);
+    if (withMeta.page) contextLines.push("Page: " + withMeta.page);
+    if (withMeta.ts) contextLines.push("Time: " + withMeta.ts);
+    if (withMeta.postal) contextLines.push("Postal: " + withMeta.postal);
     if (serviceStatus) contextLines.push("Service Area: " + serviceStatus);
-    if (withAttr.estimateSummary) contextLines.push("Estimate: " + withAttr.estimateSummary);
+    if (withMeta.needByLabel) contextLines.push("Need By: " + withMeta.needByLabel);
+    if (withMeta.leadPriority) contextLines.push("Lead Priority: " + withMeta.leadPriority);
+    if (withMeta.estimateSummary) contextLines.push("Estimate: " + withMeta.estimateSummary);
+    if (withMeta.uploadSummary) contextLines.push("Uploads: " + withMeta.uploadSummary);
     if (attributionSummary) contextLines.push("Attribution: " + attributionSummary);
     if (p.context && contextLines.length) {
       params.push("entry." + p.context + "=" + encodeURIComponent(contextLines.join(" | ")));
@@ -1087,7 +1334,7 @@
       else source = "Website";
     }
 
-    return withAttributionContext({
+    return withQuoteContext({
       product: product,
       source: source,
       page: location.href,
@@ -1246,6 +1493,20 @@
       '#bsv-qd-qual-status{margin-top:7px;color:#5a6f82;font:600 12px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
       '#bsv-qd-qual-status[data-state="ok"]{color:#0f6a3d;}' +
       '#bsv-qd-qual-status[data-state="warn"]{color:#934112;}' +
+      '#bsv-qd-urg{padding:10px 14px;border-bottom:1px solid #edf2f7;background:#fff;}' +
+      '#bsv-qd-urg-label{display:block;margin:0 0 6px;color:#122f4a;font:700 12px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
+      '#bsv-qd-urg-row{display:flex;gap:8px;align-items:center;}' +
+      '#bsv-qd-need-by{flex:1;border:1px solid #d7e1eb;border-radius:10px;padding:10px 11px;font:700 13px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#13283f;background:#fff;outline:none;}' +
+      '#bsv-qd-need-by:focus{border-color:#0f3557;box-shadow:0 0 0 3px rgba(15,53,87,.12);}' +
+      '#bsv-qd-priority{display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:0 10px;border-radius:999px;background:#eef3f8;color:#264055;font:800 11px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;white-space:nowrap;}' +
+      '#bsv-qd-priority[data-priority="hot"]{background:#fff1f2;color:#9f1239;}' +
+      '#bsv-qd-urg-note{margin-top:7px;color:#5a6f82;font:600 12px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
+      '#bsv-qd-upload{padding:10px 14px;border-bottom:1px solid #edf2f7;background:#fff;display:flex;flex-direction:column;gap:7px;}' +
+      '#bsv-qd-upload-label{display:block;margin:0;color:#122f4a;font:700 12px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
+      '#bsv-qd-files{display:block;width:100%;border:1px dashed #c8d7e6;border-radius:10px;padding:10px;background:#fbfdff;color:#1d3951;font:600 12px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
+      '#bsv-qd-link{border:1px solid #d7e1eb;border-radius:10px;padding:10px 11px;font:600 13px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#13283f;outline:none;}' +
+      '#bsv-qd-link:focus{border-color:#0f3557;box-shadow:0 0 0 3px rgba(15,53,87,.12);}' +
+      '#bsv-qd-upload-status{color:#5a6f82;font:600 12px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
       '#bsv-qd-frame-wrap{position:relative;flex:1;min-height:0;}' +
       '#bsv-qd-gate{position:absolute;inset:0;z-index:2;display:none;align-items:center;justify-content:center;flex-direction:column;gap:10px;text-align:center;padding:16px;background:linear-gradient(180deg,rgba(255,255,255,.98),rgba(247,251,255,.98));}' +
       '#bsv-qd-gate.open{display:flex;}' +
@@ -1255,7 +1516,7 @@
       '@media (max-width:980px){#bsv-aio-trust{grid-template-columns:1fr 1fr;}.bsv-est-grid{grid-template-columns:1fr 1fr;}.bsv-est-calc{grid-column:1/-1;}}' +
       '@media (max-width:1100px){#bsv-drail-root{display:none;}}' +
       '@media (max-width:900px){#bsv-aio-mobile{display:grid;}html.bsv-aio-mobile-pad body{padding-bottom:calc(86px + env(safe-area-inset-bottom,0px))!important;}#bsv-aio-faq{grid-template-columns:1fr;}}' +
-      '@media (max-width:640px){#bsv-aio-fab{right:12px;bottom:12px;padding:11px 14px;font-size:13px;}#bsv-aio-title{font-size:19px;}#bsv-aio-results{grid-template-columns:1fr;}#bsv-aio-trust{grid-template-columns:1fr;}#bsv-qd-title{font-size:16px;}#bsv-exit-title{font-size:19px;}#bsv-exit-actions{grid-template-columns:1fr;}.bsv-mr-chip{padding:8px 10px;font-size:12px;}.bsv-est-grid{grid-template-columns:1fr;}.bsv-est-calc,.bsv-est-quote{width:100%;}.bsv-est-actions{flex-direction:column;align-items:stretch;}.bsv-est-hint{display:block;}}';
+      '@media (max-width:640px){#bsv-aio-fab{right:12px;bottom:12px;padding:11px 14px;font-size:13px;}#bsv-aio-title{font-size:19px;}#bsv-aio-results{grid-template-columns:1fr;}#bsv-aio-trust{grid-template-columns:1fr;}#bsv-qd-title{font-size:16px;}#bsv-exit-title{font-size:19px;}#bsv-exit-actions{grid-template-columns:1fr;}.bsv-mr-chip{padding:8px 10px;font-size:12px;}.bsv-est-grid{grid-template-columns:1fr;}.bsv-est-calc,.bsv-est-quote{width:100%;}.bsv-est-actions{flex-direction:column;align-items:stretch;}.bsv-est-hint{display:block;}#bsv-qd-urg-row{flex-direction:column;align-items:stretch;}#bsv-qd-priority{width:100%;}}';
 
     var style = document.createElement("style");
     style.id = IDS.style;
@@ -1277,25 +1538,14 @@
     var openNew = q("#bsv-qd-open-new");
     var contextText = q("#bsv-qd-context-text");
 
-    var ctx = withAttributionContext(ctxOverride || app.quoteContext || {});
-    app.quoteContext = withAttributionContext({
+    var ctx = withQuoteContext(ctxOverride || app.quoteContext || {});
+    app.quoteContext = withQuoteContext(Object.assign({}, ctx, {
       product: ctx.product || "",
       source: ctx.source || "Website",
       page: ctx.page || location.href,
       ts: ctx.ts || new Date().toISOString(),
-      postal: ctx.postal || "",
-      serviceQualified: typeof ctx.serviceQualified === "boolean" ? ctx.serviceQualified : undefined,
-      estimateSummary: ctx.estimateSummary || "",
-      attributionSource: ctx.attributionSource || "",
-      attributionMedium: ctx.attributionMedium || "",
-      attributionCampaign: ctx.attributionCampaign || "",
-      attributionTerm: ctx.attributionTerm || "",
-      attributionContent: ctx.attributionContent || "",
-      attributionClickId: ctx.attributionClickId || "",
-      attributionClickType: ctx.attributionClickType || "",
-      attributionReferrerHost: ctx.attributionReferrerHost || "",
-      attributionSummary: ctx.attributionSummary || ""
-    });
+      serviceQualified: typeof ctx.serviceQualified === "boolean" ? ctx.serviceQualified : undefined
+    }));
     app.quoteSession = {
       iframeLoads: 0,
       submitted: false,
@@ -1305,7 +1555,8 @@
 
     if (contextText) {
       var productLabel = app.quoteContext.product ? ("Product: " + app.quoteContext.product + " | ") : "";
-      contextText.textContent = "Context: " + productLabel + "Source: " + app.quoteContext.source;
+      var priorityLabel = app.quoteContext.leadPriority ? (" | Priority: " + app.quoteContext.leadPriority) : "";
+      contextText.textContent = "Context: " + productLabel + "Source: " + app.quoteContext.source + priorityLabel;
     }
 
     if (frame && frame.hasAttribute("src")) frame.removeAttribute("src");
@@ -1320,7 +1571,7 @@
       source: app.quoteContext.source || "Website",
       product: app.quoteContext.product || "General",
       service_qualified: app.quoteContext.serviceQualified === true ? "yes" : (app.quoteContext.serviceQualified === false ? "no" : "unknown")
-    }, attributionEventParams(app.quoteContext)));
+    }, quoteSignalEventParams(app.quoteContext), attributionEventParams(app.quoteContext)));
 
     if (overlay) {
       overlay.classList.add("open");
@@ -1354,6 +1605,20 @@
       '      </div>',
       '      <div id="bsv-qd-qual-status" data-state="idle">Enter a Canadian postal code to confirm delivery coverage.</div>',
       '    </div>',
+      '    <div id="bsv-qd-urg">',
+      '      <label id="bsv-qd-urg-label" for="bsv-qd-need-by">Need It By</label>',
+      '      <div id="bsv-qd-urg-row">',
+      '        <select id="bsv-qd-need-by"></select>',
+      '        <span id="bsv-qd-priority" data-priority="standard">Priority: Standard</span>',
+      '      </div>',
+      '      <div id="bsv-qd-urg-note">Standard lead priority.</div>',
+      '    </div>',
+      '    <div id="bsv-qd-upload">',
+      '      <label id="bsv-qd-upload-label" for="bsv-qd-files">Plans / Material List</label>',
+      '      <input id="bsv-qd-files" type="file" multiple accept=".pdf,.csv,.xls,.xlsx,.jpg,.jpeg,.png,.webp,.dwg,.dxf" />',
+      '      <input id="bsv-qd-link" type="url" inputmode="url" placeholder="Optional share link (Google Drive, Dropbox, etc.)" />',
+      '      <div id="bsv-qd-upload-status">Attach up to 3 files. File names and links are added to quote context.</div>',
+      '    </div>',
       '    <div id="bsv-qd-frame-wrap">',
       '      <div id="bsv-qd-gate" class="open">',
       '        <p id="bsv-qd-gate-text">Enter your postal code and check service area to continue.</p>',
@@ -1375,9 +1640,200 @@
     var frame = q("#bsv-qd-frame");
     var postalInput = q("#bsv-qd-postal");
     var postalCheck = q("#bsv-qd-check");
+    var urgencyWrap = q("#bsv-qd-urg");
+    var needBySelect = q("#bsv-qd-need-by");
+    var priorityTag = q("#bsv-qd-priority");
+    var urgencyNote = q("#bsv-qd-urg-note");
+    var uploadWrap = q("#bsv-qd-upload");
+    var uploadInput = q("#bsv-qd-files");
+    var uploadLink = q("#bsv-qd-link");
+    var uploadStatus = q("#bsv-qd-upload-status");
+
+    function refreshQuoteTargetsWithoutReset() {
+      var state = getServiceAreaState();
+      var canOpen = !serviceAreaEnabled() || !!state.qualified;
+      if (!canOpen) return;
+
+      if (openNew) openNew.setAttribute("href", formOpenNewUrl(app.quoteContext || {}));
+      if (frame && !(frame.getAttribute("src") || "")) frame.setAttribute("src", formEmbedUrl(app.quoteContext || {}));
+    }
+
+    function syncUrgencyUi(meta) {
+      if (needBySelect && needBySelect.value !== meta.value) needBySelect.value = meta.value;
+      if (priorityTag) {
+        priorityTag.textContent = "Priority: " + meta.priority;
+        priorityTag.setAttribute("data-priority", meta.isHot ? "hot" : "standard");
+      }
+      if (urgencyNote) {
+        urgencyNote.textContent = meta.isHot
+          ? "Hot lead flagged for prioritized follow-up."
+          : "Standard lead priority.";
+      }
+    }
+
+    function applyUrgencySelection(rawValue, sourceLabel, shouldTrack) {
+      var meta = resolveUrgencyMeta(rawValue);
+      var ctx = withQuoteContext(app.quoteContext || {});
+
+      app.quoteContext = withQuoteContext(Object.assign({}, ctx, {
+        needByValue: meta.value,
+        needByLabel: meta.label,
+        urgencyDays: meta.days,
+        leadPriority: meta.priority
+      }));
+
+      syncUrgencyUi(meta);
+      refreshQuoteTargetsWithoutReset();
+
+      if (shouldTrack) {
+        trackEvent("bs_quote_urgency_selected", Object.assign({
+          source: sourceLabel || app.quoteContext.source || "Website",
+          product: app.quoteContext.product || "General",
+          need_by: meta.value,
+          need_by_label: meta.label,
+          lead_priority: meta.priority
+        }, attributionEventParams(app.quoteContext)));
+      }
+    }
+
+    function describeUploadStatus(state) {
+      var files = Array.isArray(state && state.files) ? state.files : [];
+      var rejected = Array.isArray(state && state.rejected) ? state.rejected : [];
+      var link = normalizeUploadLink(state && state.link);
+      var cfg = uploadConfig();
+      var notes = [];
+
+      if (files.length) {
+        notes.push(files.length + " file(s) ready");
+      } else {
+        notes.push("Attach up to " + cfg.maxFiles + " files");
+      }
+
+      if (link) notes.push("share link included");
+
+      if (rejected.length) {
+        var first = rejected[0];
+        var reason = first && first.reason ? first.reason : "invalid";
+        notes.push(rejected.length + " skipped (" + reason + ")");
+      }
+
+      return notes.join(" | ") + ".";
+    }
+
+    function collectUploadStateFromInputs() {
+      var cfg = uploadConfig();
+      var allowedMap = {};
+      cfg.allowedExtensions.forEach(function (ext) { allowedMap[ext] = true; });
+
+      var selected = uploadInput && uploadInput.files ? Array.prototype.slice.call(uploadInput.files) : [];
+      var files = [];
+      var rejected = [];
+      var i;
+
+      for (i = 0; i < selected.length; i += 1) {
+        var file = selected[i];
+        if (files.length >= cfg.maxFiles) {
+          rejected.push({ name: String(file && file.name || ""), reason: "max_files" });
+          continue;
+        }
+
+        var name = sanitizeAttributionValue(file && file.name, 80);
+        var sizeBytes = Number(file && file.size || 0);
+        var ext = uploadExtension(name);
+
+        if (!name) {
+          rejected.push({ name: "", reason: "invalid_name" });
+          continue;
+        }
+        if (!allowedMap[ext]) {
+          rejected.push({ name: name, reason: "type_not_allowed" });
+          continue;
+        }
+        if (sizeBytes > cfg.maxFileSizeBytes) {
+          rejected.push({ name: name, reason: "file_too_large" });
+          continue;
+        }
+
+        files.push({ name: name, sizeBytes: Math.floor(sizeBytes), ext: ext });
+      }
+
+      return {
+        files: files,
+        link: normalizeUploadLink(uploadLink && uploadLink.value),
+        rejected: rejected
+      };
+    }
+
+    function applyUploadSelection(sourceLabel, shouldTrack) {
+      var state = setUploadState(collectUploadStateFromInputs());
+      var summary = buildUploadSummary(state.files, state.link);
+      var ctx = withQuoteContext(app.quoteContext || {});
+
+      app.quoteContext = withQuoteContext(Object.assign({}, ctx, {
+        uploadFiles: state.files,
+        uploadCount: state.files.length,
+        uploadLink: state.link,
+        uploadSummary: summary
+      }));
+
+      if (uploadStatus) uploadStatus.textContent = describeUploadStatus(state);
+      refreshQuoteTargetsWithoutReset();
+
+      if (shouldTrack) {
+        trackEvent("bs_quote_upload_added", Object.assign({
+          source: sourceLabel || app.quoteContext.source || "Website",
+          product: app.quoteContext.product || "General",
+          upload_count: state.files.length,
+          rejected_count: state.rejected.length,
+          has_upload_link: state.link ? "yes" : "no"
+        }, quoteSignalEventParams(app.quoteContext), attributionEventParams(app.quoteContext)));
+      }
+    }
 
     if (closeBtn) closeBtn.addEventListener("click", closeDrawer);
     if (overlay) overlay.addEventListener("click", function (e) { if (!panel.contains(e.target)) closeDrawer(); });
+
+    if (urgencyWrap && !urgencyEnabled()) {
+      urgencyWrap.style.display = "none";
+    } else {
+      var urgencyOpts = urgencyOptions();
+      if (needBySelect) {
+        needBySelect.innerHTML = urgencyOpts.map(function (opt) {
+          return '<option value="' + esc(opt.value) + '">' + esc(opt.label) + '</option>';
+        }).join("");
+      }
+
+      var initialUrgency = resolveUrgencyMeta((app.quoteContext && app.quoteContext.needByValue) || "");
+      applyUrgencySelection(initialUrgency.value, "Quote Drawer", false);
+
+      if (needBySelect) {
+        needBySelect.addEventListener("change", function () {
+          applyUrgencySelection(needBySelect.value, "Quote Drawer", true);
+        });
+      }
+    }
+
+    if (uploadWrap && !uploadsEnabled()) {
+      uploadWrap.style.display = "none";
+    } else {
+      var existingUploadState = getUploadState();
+      if (uploadLink && existingUploadState.link) uploadLink.value = existingUploadState.link;
+      applyUploadSelection("Quote Drawer", false);
+
+      if (uploadInput) {
+        uploadInput.addEventListener("change", function () {
+          applyUploadSelection("Quote Drawer", true);
+        });
+      }
+      if (uploadLink) {
+        uploadLink.addEventListener("change", function () {
+          applyUploadSelection("Quote Drawer", true);
+        });
+        uploadLink.addEventListener("blur", function () {
+          applyUploadSelection("Quote Drawer", false);
+        });
+      }
+    }
 
     function runServiceAreaCheck(sourceOverride) {
       if (!serviceAreaEnabled()) return null;
@@ -1386,21 +1842,21 @@
       var ctx = app.quoteContext || {};
       var source = sourceOverride || ctx.source || "Website";
 
-      trackEvent("bs_service_area_checked", {
+      trackEvent("bs_service_area_checked", Object.assign({
         source: source,
         product: ctx.product || "General",
         postal_fsa: state.fsa || "",
         qualified: state.qualified ? "yes" : "no",
         reason: state.reason
-      });
+      }, quoteSignalEventParams(ctx), attributionEventParams(ctx)));
 
       if (state.checked && !state.qualified && state.reason === "out_of_area") {
-        trackEvent("bs_service_area_blocked", {
+        trackEvent("bs_service_area_blocked", Object.assign({
           source: source,
           product: ctx.product || "General",
           reason: "out_of_area",
           postal_fsa: state.fsa || ""
-        });
+        }, quoteSignalEventParams(ctx), attributionEventParams(ctx)));
       }
 
       applyServiceAreaGate();
@@ -1442,7 +1898,7 @@
 
     if (copyBtn) {
       copyBtn.addEventListener("click", function () {
-        var ctx = app.quoteContext || {};
+        var ctx = withQuoteContext(app.quoteContext || {});
         var serviceLabel = ctx.serviceQualified === true ? "Qualified" : (ctx.serviceQualified === false ? "Outside Standard Area" : "Not checked");
         var lines = [
           "Quote Context",
@@ -1452,6 +1908,9 @@
           "Time: " + (ctx.ts || new Date().toISOString()),
           "Postal: " + (ctx.postal || "Not provided"),
           "Service Area: " + serviceLabel,
+          "Need By: " + (ctx.needByLabel || "Not specified"),
+          "Lead Priority: " + (ctx.leadPriority || "Standard"),
+          "Uploads: " + (ctx.uploadSummary || "None"),
           "Attribution: " + (ctx.attributionSummary || "Not captured")
         ].join("\n");
 
@@ -1466,17 +1925,17 @@
 
     if (openNew) {
       openNew.addEventListener("click", function (e) {
-        var ctx = app.quoteContext || {};
+        var ctx = withQuoteContext(app.quoteContext || {});
         var state = getServiceAreaState();
 
         if (serviceAreaEnabled() && !state.qualified) {
           e.preventDefault();
-          trackEvent("bs_service_area_blocked", {
+          trackEvent("bs_service_area_blocked", Object.assign({
             source: ctx.source || "Website",
             product: ctx.product || "General",
             reason: state.reason || "not_qualified",
             postal_fsa: state.fsa || ""
-          });
+          }, quoteSignalEventParams(ctx), attributionEventParams(ctx)));
           applyServiceAreaGate();
           if (postalInput) postalInput.focus();
           return;
@@ -1486,7 +1945,7 @@
           source: ctx.source || "Website",
           product: ctx.product || "General",
           postal_fsa: state.fsa || ""
-        }, attributionEventParams(ctx)));
+        }, quoteSignalEventParams(ctx), attributionEventParams(ctx)));
       });
     }
 
@@ -1501,10 +1960,10 @@
         session.iframeLoads += 1;
 
         if (session.iframeLoads === 1) {
-          trackEvent("bs_quote_form_loaded", {
+          trackEvent("bs_quote_form_loaded", Object.assign({
             source: session.source || "Website",
             product: session.product || "General"
-          });
+          }, quoteSignalEventParams(app.quoteContext || {}), attributionEventParams(app.quoteContext || {})));
           return;
         }
 
@@ -1849,7 +2308,7 @@
         if (!estimate) runEstimate(true);
         if (!estimate) return;
 
-        app.quoteContext = withAttributionContext({
+        app.quoteContext = withQuoteContext({
           product: estimate.product,
           source: "Estimator",
           page: location.href,
@@ -2346,7 +2805,7 @@
     window.BUILDSAVER_ANALYTICS.markQuoteSubmitted = markQuoteSubmitted;
     bindGlobalCapture();
 
-    app.quoteContext = withAttributionContext({ product: "", source: "Website", page: location.href, ts: new Date().toISOString() });
+    app.quoteContext = withQuoteContext({ product: "", source: "Website", page: location.href, ts: new Date().toISOString() });
 
     mountQuoteDrawer();
     mountFinder();
@@ -2377,5 +2836,5 @@
   }
 })();
 /* BuildSaver deploy metadata */
-window.__BUILDSAVER_DEPLOY_BUILD_AT = "2026-04-19T03:16:18Z";
-window.__BUILDSAVER_DEPLOY_SOURCE_SHA = "20ceda2d1d5d4119da3849c38c12369f4ed433ae";
+window.__BUILDSAVER_DEPLOY_BUILD_AT = "2026-04-25T04:29:53Z";
+window.__BUILDSAVER_DEPLOY_SOURCE_SHA = "9796ca333f719d9547016a227c5c6f230d1cd1bf";
