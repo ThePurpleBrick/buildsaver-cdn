@@ -1,0 +1,158 @@
+name: sync-buildsaver-source
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: sync-buildsaver-source
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      SOURCE_REPO: ThePurpleBrick/buildsaver
+      SOURCE_BRANCH: main
+
+    steps:
+      - name: Checkout CDN repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate required secret
+        run: |
+          set -euo pipefail
+          test -n "${{ secrets.BUILDSAVER_SOURCE_DEPLOY_KEY }}" || { echo "Missing secret: BUILDSAVER_SOURCE_DEPLOY_KEY" >&2; exit 1; }
+
+      - name: Checkout source repo (read-only deploy key)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ env.SOURCE_BRANCH }}
+          ssh-key: ${{ secrets.BUILDSAVER_SOURCE_DEPLOY_KEY }}
+          persist-credentials: false
+          path: source-repo
+
+      - name: Build and validate source assets
+        run: |
+          set -euo pipefail
+          cd source-repo
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          echo "SOURCE_SHA=${SOURCE_SHA}" >> "$GITHUB_ENV"
+          chmod +x scripts/build-pages-asset.sh scripts/validate-cdn-safety.sh
+          SOURCE_SHA="${SOURCE_SHA}" ./scripts/validate-cdn-safety.sh
+
+      - name: Sync generated assets
+        run: |
+          set -euo pipefail
+          install -m 0644 source-repo/dist/pages/footer-code-injection.js footer-code-injection.js
+          install -m 0644 source-repo/dist/pages/deploy-manifest.json deploy-manifest.json
+          install -m 0644 source-repo/dist/pages/runtime-config.json runtime-config.json
+
+      - name: Validate CDN repo artifacts
+        run: |
+          set -euo pipefail
+          node scripts/validate-cdn-asset.js
+
+      - name: Commit sync branch
+        id: commit
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- footer-code-injection.js deploy-manifest.json runtime-config.json; then
+            echo "No asset changes from source."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          branch="buildsaver-cdn/publish-${SOURCE_SHA:0:12}-${GITHUB_RUN_ID}"
+          git checkout -b "$branch"
+          git config user.name "buildsaver-bot"
+          git config user.email "buildsaver-bot@users.noreply.github.com"
+          git add footer-code-injection.js deploy-manifest.json runtime-config.json
+          git commit -m "chore: sync CDN assets ${SOURCE_SHA}"
+          git push origin "$branch"
+
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          echo "branch=${branch}" >> "$GITHUB_OUTPUT"
+
+      - name: Create sync PR
+        if: steps.commit.outputs.has_changes == 'true'
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          title="chore: sync CDN assets ${SOURCE_SHA}"
+          body="Automated sync from ${SOURCE_REPO}@${SOURCE_SHA} via https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          pr_url="$(gh pr create --base main --head "${{ steps.commit.outputs.branch }}" --title "$title" --body "$body")"
+          pr_number="${pr_url##*/}"
+          head_sha="$(gh pr view "$pr_number" --json headRefOid --jq .headRefOid)"
+
+          echo "pr_url=${pr_url}" >> "$GITHUB_OUTPUT"
+          echo "pr_number=${pr_number}" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${head_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for required checks and merge
+        if: steps.commit.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          head_sha="${{ steps.pr.outputs.head_sha }}"
+          pr_number="${{ steps.pr.outputs.pr_number }}"
+
+          check_ready=false
+          check_failed=false
+
+          for i in $(seq 1 40); do
+            validate_state="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${head_sha}/check-runs" --jq '
+              def state($name):
+                ([.check_runs[] | select(.name == $name)] | if length == 0 then "missing" else ((.[0].status // "unknown") + ":" + (.[0].conclusion // "none")) end);
+              state("validate")
+            ')"
+            secret_scan_state="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${head_sha}/check-runs" --jq '
+              def state($name):
+                ([.check_runs[] | select(.name == $name)] | if length == 0 then "missing" else ((.[0].status // "unknown") + ":" + (.[0].conclusion // "none")) end);
+              state("secret-scan")
+            ')"
+
+            echo "check states (attempt ${i}): validate=${validate_state}, secret-scan=${secret_scan_state}"
+
+            if [ "$validate_state" = "completed:success" ] && [ "$secret_scan_state" = "completed:success" ]; then
+              check_ready=true
+              break
+            fi
+
+            for state in "$validate_state" "$secret_scan_state"; do
+              if [ "$state" = "completed:failure" ] || [ "$state" = "completed:cancelled" ] || [ "$state" = "completed:timed_out" ] || [ "$state" = "completed:action_required" ]; then
+                check_failed=true
+                break
+              fi
+            done
+            if [ "$check_failed" = true ]; then
+              break
+            fi
+
+            sleep 5
+          done
+
+          if [ "$check_ready" = true ]; then
+            gh pr merge "$pr_number" --squash --delete-branch
+            echo "Sync PR merged: ${{ steps.pr.outputs.pr_url }}"
+            exit 0
+          fi
+
+          if [ "$check_failed" = true ]; then
+            echo "Required check failed for PR: ${{ steps.pr.outputs.pr_url }}" >&2
+            exit 1
+          fi
+
+          echo "Timed out waiting for required checks: ${{ steps.pr.outputs.pr_url }}" >&2
+          exit 1
