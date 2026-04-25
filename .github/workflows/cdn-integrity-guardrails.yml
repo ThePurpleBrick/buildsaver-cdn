@@ -4,21 +4,9 @@ on:
   push:
     branches:
       - main
-    paths:
-      - 'footer-code-injection.js'
-      - 'deploy-manifest.json'
-      - 'runtime-config.json'
-      - 'scripts/validate-cdn-asset.js'
-      - '.github/workflows/cdn-integrity-guardrails.yml'
   pull_request:
     branches:
       - main
-    paths:
-      - 'footer-code-injection.js'
-      - 'deploy-manifest.json'
-      - 'runtime-config.json'
-      - 'scripts/validate-cdn-asset.js'
-      - '.github/workflows/cdn-integrity-guardrails.yml'
   workflow_dispatch:
 
 jobs:
