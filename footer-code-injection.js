@@ -2,11 +2,11 @@
   var APP_KEY = "__buildSaverAllInOneV9";
   var app = window[APP_KEY] || (window[APP_KEY] = {});
 
-  if (app.version === "v18" && typeof app.remount === "function") {
+  if (app.version === "v19" && typeof app.remount === "function") {
     app.remount();
     return;
   }
-  app.version = "v18";
+  app.version = "v19";
 
   var CONFIG = {
     ga4: {
@@ -50,6 +50,34 @@
       minTextLength: 20,
       maxAgeDays: 1095,
       blockedTerms: ["refund scam", "spam link"]
+    },
+    localSeo: {
+      enabled: true,
+      landingParam: "area",
+      serviceAreas: [
+        { name: "Toronto", slug: "toronto", href: "/home?area=toronto", summary: "Drywall, insulation, and roofing supply support across Toronto." },
+        { name: "Mississauga", slug: "mississauga", href: "/home?area=mississauga", summary: "Contractor-focused material supply for Mississauga projects." },
+        { name: "Brampton", slug: "brampton", href: "/home?area=brampton", summary: "Fast quote support and delivery coordination in Brampton." },
+        { name: "Vaughan", slug: "vaughan", href: "/home?area=vaughan", summary: "Building material sourcing and job-site delivery in Vaughan." },
+        { name: "Oakville", slug: "oakville", href: "/home?area=oakville", summary: "Residential and commercial supply support in Oakville." },
+        { name: "Burlington", slug: "burlington", href: "/home?area=burlington", summary: "Local contractor ordering support for Burlington builds." }
+      ],
+      serviceFaqs: [
+        { q: "Do you deliver to {area} job sites?", a: "Yes. Include your project address and we will confirm delivery windows for {area}." },
+        { q: "Can I request contractor pricing in {area}?", a: "Yes. Share product mix, estimated volume, and timeline to get contractor pricing support in {area}." },
+        { q: "How quickly can I get a quote in {area}?", a: "Most quote requests for {area} are reviewed during business hours with follow-up on product and fulfillment options." }
+      ]
+    },
+    performance: {
+      enabled: true,
+      deferHeavyMs: 380,
+      idleTimeoutMs: 1800,
+      preconnectOrigins: [
+        "https://cdn.jsdelivr.net",
+        "https://docs.google.com",
+        "https://www.google.com",
+        "https://www.gstatic.com"
+      ]
     },
     quoteConversion: {
       returnParam: "bsv_quote_submitted",
@@ -125,6 +153,7 @@
     mostRequested: "bsv-mr-section",
     estimator: "bsv-est-section",
     cats: "bsv-aio-cats",
+    serviceAreas: "bsv-seo-areas",
     faq: "bsv-aio-faq",
     faqJson: "bsv-aio-faq-jsonld",
     localSchema: "bsv-local-schema-jsonld",
@@ -176,9 +205,14 @@
     return String(s || "").toLowerCase().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
   }
 
-  function isHome() {
+  function pagePath() {
     var p = (location.pathname || "/").replace(/\/+$/, "");
-    return p === "" || p === "/";
+    return p || "/";
+  }
+
+  function isHome() {
+    var p = pagePath();
+    return p === "/" || p === "/home";
   }
 
   function callUrl() {
@@ -193,6 +227,100 @@
     if (n.charAt(0) === "+") return n;
     if (n.length === 10) return "+1" + n;
     return n;
+  }
+
+  function slugify(raw) {
+    return String(raw || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  }
+
+  function absUrl(raw) {
+    var href = String(raw || "").trim();
+    if (!href) return "";
+    try {
+      return new URL(href, location.origin).toString();
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function currentQueryParam(name) {
+    var key = String(name || "").trim();
+    if (!key) return "";
+    try {
+      var params = new URLSearchParams(location.search || "");
+      return String(params.get(key) || "").trim();
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function getLocalSeoConfig() {
+    var cfg = CONFIG.localSeo || {};
+    var areas = Array.isArray(cfg.serviceAreas) ? cfg.serviceAreas : [];
+    var normalized = areas.map(function (item) {
+      var name = String(item && item.name || "").trim();
+      if (!name) return null;
+
+      var slug = slugify(item.slug || name);
+      var href = absUrl(item.href || ("/home?area=" + encodeURIComponent(slug)));
+      var summary = String(item.summary || "").trim();
+      if (!href) return null;
+
+      var urlObj = new URL(href);
+      return {
+        name: name,
+        slug: slug || slugify(name),
+        href: href,
+        path: (urlObj.pathname || "/").replace(/\/+$/, "") || "/",
+        queryArea: String(urlObj.searchParams.get(String(cfg.landingParam || "area")) || "").trim(),
+        summary: summary || ("Material supply and quote support in " + name + ".")
+      };
+    }).filter(Boolean);
+
+    return {
+      enabled: cfg.enabled !== false,
+      landingParam: String(cfg.landingParam || "area").trim() || "area",
+      serviceAreas: normalized,
+      serviceFaqs: Array.isArray(cfg.serviceFaqs) ? cfg.serviceFaqs : []
+    };
+  }
+
+  function activeServiceArea() {
+    var cfg = getLocalSeoConfig();
+    if (!cfg.enabled || !cfg.serviceAreas.length) return null;
+
+    var byParam = slugify(currentQueryParam(cfg.landingParam));
+    if (byParam) {
+      var matchParam = cfg.serviceAreas.find(function (area) { return area.slug === byParam; });
+      if (matchParam) return matchParam;
+    }
+
+    var path = pagePath();
+    var matchPath = cfg.serviceAreas.find(function (area) {
+      if (area.path !== path) return false;
+      if (!area.queryArea) return true;
+      return slugify(currentQueryParam(cfg.landingParam)) === slugify(area.queryArea);
+    });
+    return matchPath || null;
+  }
+
+  function areaFaqEntries(areaName) {
+    var cfg = getLocalSeoConfig();
+    var safeArea = String(areaName || "your area");
+    var list = (cfg.serviceFaqs || []).map(function (row) {
+      var qText = String(row && row.q || "").replace(/\{area\}/gi, safeArea).trim();
+      var aText = String(row && row.a || "").replace(/\{area\}/gi, safeArea).trim();
+      if (!qText || !aText) return null;
+      return {
+        "@type": "Question",
+        name: qText,
+        acceptedAnswer: { "@type": "Answer", text: aText }
+      };
+    }).filter(Boolean);
+    return list;
   }
 
   function attributionEnabled() {
@@ -789,6 +917,80 @@
     return /^https?:\/\//i.test(u) ? u : "";
   }
 
+  function getPerformanceConfig() {
+    var cfg = CONFIG.performance || {};
+    var origins = Array.isArray(cfg.preconnectOrigins) ? cfg.preconnectOrigins : [];
+    return {
+      enabled: cfg.enabled !== false,
+      deferHeavyMs: clamp(Number(cfg.deferHeavyMs) || 380, 0, 5000),
+      idleTimeoutMs: clamp(Number(cfg.idleTimeoutMs) || 1800, 200, 5000),
+      preconnectOrigins: origins.map(function (u) { return safeHttpUrl(u); }).filter(Boolean)
+    };
+  }
+
+  function clearDeferredTasks() {
+    var tasks = Array.isArray(app.deferredTasks) ? app.deferredTasks : [];
+    tasks.forEach(function (task) {
+      if (!task || !task.id) return;
+      if (task.type === "idle" && "cancelIdleCallback" in window) {
+        try { window.cancelIdleCallback(task.id); } catch (e) {}
+      } else {
+        try { clearTimeout(task.id); } catch (e2) {}
+      }
+    });
+    app.deferredTasks = [];
+  }
+
+  function scheduleDeferredTask(fn, delayMs, token) {
+    if (typeof fn !== "function") return;
+    var perf = getPerformanceConfig();
+    var delay = Math.max(0, Number(delayMs) || 0);
+    var mountToken = Number(token) || 0;
+
+    function guardedRun() {
+      if (mountToken !== app.mountToken) return;
+      fn();
+    }
+
+    app.deferredTasks = Array.isArray(app.deferredTasks) ? app.deferredTasks : [];
+
+    if (perf.enabled && delay === 0 && "requestIdleCallback" in window) {
+      var idleId = window.requestIdleCallback(guardedRun, { timeout: perf.idleTimeoutMs });
+      app.deferredTasks.push({ type: "idle", id: idleId });
+      return;
+    }
+
+    var timeoutId = setTimeout(guardedRun, delay);
+    app.deferredTasks.push({ type: "timeout", id: timeoutId });
+  }
+
+  function ensureResourceHint(rel, href, needsCrossOrigin) {
+    var target = String(href || "").trim();
+    if (!target) return;
+
+    var exists = qa('link[rel="' + rel + '"]').some(function (node) {
+      var nodeHref = String(node.getAttribute("href") || "").trim();
+      return nodeHref === target;
+    });
+    if (exists) return;
+
+    var link = document.createElement("link");
+    link.setAttribute("rel", rel);
+    link.setAttribute("href", target);
+    if (needsCrossOrigin) link.setAttribute("crossorigin", "anonymous");
+    document.head.appendChild(link);
+  }
+
+  function mountResourceHints() {
+    var perf = getPerformanceConfig();
+    if (!perf.enabled) return;
+
+    perf.preconnectOrigins.forEach(function (origin) {
+      ensureResourceHint("dns-prefetch", origin, false);
+      ensureResourceHint("preconnect", origin, true);
+    });
+  }
+
   function getReviewsConfig() {
     var base = CONFIG.reviews || {};
     var out = {
@@ -1326,6 +1528,7 @@
     if (!source) {
       if (trigger.closest("#" + IDS.cats)) source = "Category Grid";
       else if (trigger.closest("#" + IDS.finder)) source = "Finder";
+      else if (trigger.closest("#" + IDS.serviceAreas)) source = "Service Areas";
       else if (trigger.closest("#" + IDS.faq)) source = "FAQ";
       else if (trigger.closest("#" + IDS.trust)) source = "Trust Strip";
       else if (trigger.closest("#" + IDS.mostRequested)) source = "Most Requested";
@@ -1343,7 +1546,9 @@
   }
 
   function cleanup() {
-    var ids = [IDS.style, IDS.finder, IDS.trust, IDS.mostRequested, IDS.estimator, IDS.cats, IDS.faq, IDS.faqJson, IDS.localSchema, IDS.proof, IDS.mobile, IDS.drawerRoot, IDS.desktopRail, IDS.exitNudge].concat(LEGACY_IDS);
+    clearDeferredTasks();
+
+    var ids = [IDS.style, IDS.finder, IDS.trust, IDS.mostRequested, IDS.estimator, IDS.cats, IDS.serviceAreas, IDS.faq, IDS.faqJson, IDS.localSchema, IDS.proof, IDS.mobile, IDS.drawerRoot, IDS.desktopRail, IDS.exitNudge].concat(LEGACY_IDS);
     ids.forEach(function (id) {
       var el = document.getElementById(id);
       if (el && el.parentNode) el.parentNode.removeChild(el);
@@ -1414,6 +1619,18 @@
       '.bsv-aio-cat{border:1px solid #dbe6f0;border-radius:12px;background:#fff;padding:12px;}' +
       '.bsv-aio-cat h3{margin:0 0 6px;color:#13283f;font:800 15px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
       '.bsv-aio-cat p{margin:0 0 10px;color:#5a6f82;font:600 12px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
+      '#bsv-seo-areas{max-width:1200px;margin:12px auto 14px;padding:0 2px;}' +
+      '.bsv-seo-card{border:1px solid #dbe6f0;border-radius:14px;background:#fff;padding:14px;box-shadow:0 8px 20px rgba(15,53,87,.06);}' +
+      '.bsv-seo-card h2{margin:0 0 6px;color:#10263c;font:800 22px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
+      '.bsv-seo-intro{margin:0 0 10px;color:#4f6377;font:600 13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
+      '.bsv-seo-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;}' +
+      '.bsv-seo-link{display:block;border:1px solid #e5edf5;border-radius:10px;padding:10px 11px;background:#fbfdff;text-decoration:none;}' +
+      '.bsv-seo-link strong{display:block;color:#102c46;font:800 14px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin-bottom:4px;}' +
+      '.bsv-seo-link span{display:block;color:#526678;font:600 12px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
+      '.bsv-seo-link:hover{border-color:#cbd9e7;background:#f4f9ff;}' +
+      '.bsv-seo-actions{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;}' +
+      '.bsv-seo-cta{border:none;border-radius:10px;padding:10px 14px;background:#f97316;color:#fff;cursor:pointer;font:800 14px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
+      '.bsv-seo-current{margin-top:8px;color:#1f4f78;font:700 12px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
       '#bsv-aio-faq{max-width:1200px;margin:12px auto 18px;display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:0 2px;}' +
       '.bsv-aio-faq-card{border:1px solid #dbe6f0;border-radius:14px;background:#fff;padding:14px;}' +
       '.bsv-aio-faq-card h2{margin:0 0 10px;color:#10263c;font:800 22px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
@@ -2436,9 +2653,51 @@
     return faq;
   }
 
+  function mountServiceAreas(anchorEl) {
+    var seo = getLocalSeoConfig();
+    if (!isHome() || !seo.enabled || !seo.serviceAreas.length) return null;
+
+    var active = activeServiceArea();
+    var section = document.createElement("section");
+    section.id = IDS.serviceAreas;
+
+    section.innerHTML =
+      '<article class="bsv-seo-card">' +
+        '<h2>Service Areas</h2>' +
+        '<p class="bsv-seo-intro">Browse local coverage pages to find material supply support for your project location.</p>' +
+        '<div class="bsv-seo-grid">' +
+          seo.serviceAreas.map(function (area) {
+            return (
+              '<a class="bsv-seo-link" href="' + esc(area.href) + '">' +
+                '<strong>' + esc(area.name) + '</strong>' +
+                '<span>' + esc(area.summary) + '</span>' +
+              '</a>'
+            );
+          }).join("") +
+        '</div>' +
+        '<div class="bsv-seo-actions">' +
+          '<button class="bsv-seo-cta" type="button" data-open-quote-drawer="1" data-source="Service Areas">Get Area Quote</button>' +
+        '</div>' +
+        (active ? ('<div class="bsv-seo-current">Current location context: ' + esc(active.name) + '.</div>') : "") +
+      '</article>';
+
+    if (anchorEl && anchorEl.parentNode) anchorEl.insertAdjacentElement("afterend", section);
+    else {
+      var main = q("main") || document.body;
+      main.insertBefore(section, main.firstChild);
+    }
+
+    return section;
+  }
+
   function mountLocalSchema() {
+    var seo = getLocalSeoConfig();
+    var active = activeServiceArea();
     var phone = schemaPhoneNumber();
+    var baseUrl = "https://www.buildsaver.ca";
+    var homeUrl = baseUrl + "/home";
     var orgId = "https://www.buildsaver.ca/#organization";
+    var siteId = "https://www.buildsaver.ca/#website";
     var contactPoint = {
       "@type": "ContactPoint",
       contactType: "sales",
@@ -2446,20 +2705,53 @@
     };
     if (phone) contactPoint.telephone = phone;
 
+    var areaServed = [{ "@type": "AdministrativeArea", name: "Ontario" }];
+    seo.serviceAreas.forEach(function (area) {
+      areaServed.push({ "@type": "City", name: area.name });
+    });
+
+    var offerCatalog = {
+      "@type": "OfferCatalog",
+      name: "Building Materials",
+      itemListElement: PRODUCTS.map(function (product) {
+        return {
+          "@type": "OfferCatalog",
+          name: product.title,
+          itemListElement: product.items.slice(0, 4).map(function (itemName) {
+            return {
+              "@type": "Offer",
+              itemOffered: {
+                "@type": "Product",
+                name: itemName
+              }
+            };
+          })
+        };
+      })
+    };
+
+    var website = {
+      "@type": "WebSite",
+      "@id": siteId,
+      name: "BuildSaver",
+      url: baseUrl
+    };
+
     var org = {
       "@type": ["LocalBusiness", "BuildingMaterialsStore"],
       "@id": orgId,
       name: "BuildSaver",
-      url: "https://www.buildsaver.ca",
+      url: baseUrl,
       email: "info@buildsaver.ca",
       address: {
         "@type": "PostalAddress",
         addressRegion: "ON",
         addressCountry: "CA"
       },
-      areaServed: [{ "@type": "AdministrativeArea", name: "Ontario" }],
+      areaServed: areaServed,
       contactPoint: [contactPoint],
-      knowsAbout: ["Drywall", "Insulation", "Roofing Materials", "Shingles"]
+      knowsAbout: ["Drywall", "Insulation", "Roofing Materials", "Shingles"],
+      hasOfferCatalog: offerCatalog
     };
     if (phone) org.telephone = phone;
 
@@ -2469,17 +2761,60 @@
       name: "Building Materials Supply and Quote Support",
       serviceType: "Building Materials Supply",
       provider: { "@id": orgId },
-      areaServed: [{ "@type": "AdministrativeArea", name: "Ontario" }],
+      areaServed: areaServed,
       availableChannel: [contactPoint],
-      url: "https://www.buildsaver.ca"
+      url: baseUrl
     };
+
+    var graph = [website, org, service];
+
+    if (active) {
+      var areaUrl = active.href || (homeUrl + "?" + encodeURIComponent(seo.landingParam) + "=" + encodeURIComponent(active.slug));
+      var areaFaq = areaFaqEntries(active.name);
+
+      graph.push({
+        "@type": "WebPage",
+        "@id": areaUrl + "#webpage",
+        name: "Building Materials Supply in " + active.name,
+        url: areaUrl,
+        isPartOf: { "@id": siteId }
+      });
+
+      graph.push({
+        "@type": "Service",
+        "@id": areaUrl + "#service",
+        name: "Building Materials Supply in " + active.name,
+        serviceType: "Drywall, roofing, insulation, and construction material supply",
+        provider: { "@id": orgId },
+        areaServed: [{ "@type": "City", name: active.name }, { "@type": "AdministrativeArea", name: "Ontario" }],
+        availableChannel: [contactPoint],
+        url: areaUrl
+      });
+
+      graph.push({
+        "@type": "BreadcrumbList",
+        "@id": areaUrl + "#breadcrumb",
+        itemListElement: [
+          { "@type": "ListItem", position: 1, name: "Home", item: homeUrl },
+          { "@type": "ListItem", position: 2, name: active.name, item: areaUrl }
+        ]
+      });
+
+      if (areaFaq.length) {
+        graph.push({
+          "@type": "FAQPage",
+          "@id": areaUrl + "#faq",
+          mainEntity: areaFaq
+        });
+      }
+    }
 
     var s = document.createElement("script");
     s.id = IDS.localSchema;
     s.type = "application/ld+json";
     s.text = JSON.stringify({
       "@context": "https://schema.org",
-      "@graph": [org, service]
+      "@graph": graph
     });
     document.head.appendChild(s);
   }
@@ -2794,6 +3129,11 @@
 
   function mountAll() {
     cleanup();
+    app.mountToken = Number(app.mountToken || 0) + 1;
+    var mountToken = app.mountToken;
+    var perf = getPerformanceConfig();
+
+    mountResourceHints();
     injectStyle();
     initAttribution();
     initAnalytics();
@@ -2814,12 +3154,19 @@
     var est = mountEstimator(mr || trust);
     var cats = mountCategories(est || mr || trust);
     var faq = mountFaq(cats || est || mr || trust);
+    var areas = mountServiceAreas(faq || cats || est || mr || trust);
     mountLocalSchema();
-    mountProof(faq || cats || est || mr || trust);
     mountMobile();
     mountDesktopRail();
-    mountExitNudge();
-    bindExitIntent();
+
+    scheduleDeferredTask(function () {
+      mountProof(areas || faq || cats || est || mr || trust);
+    }, perf.deferHeavyMs, mountToken);
+
+    scheduleDeferredTask(function () {
+      mountExitNudge();
+      bindExitIntent();
+    }, perf.deferHeavyMs + 180, mountToken);
   }
 
   app.remount = mountAll;
@@ -2836,5 +3183,5 @@
   }
 })();
 /* BuildSaver deploy metadata */
-window.__BUILDSAVER_DEPLOY_BUILD_AT = "2026-04-25T20:21:45Z";
-window.__BUILDSAVER_DEPLOY_SOURCE_SHA = "5b348cba4bdfba06ee1365f4abab113ffa26b412";
+window.__BUILDSAVER_DEPLOY_BUILD_AT = "2026-04-27T03:58:26Z";
+window.__BUILDSAVER_DEPLOY_SOURCE_SHA = "f8f13511e8e137237c0ec13ffae897273af743bd";
