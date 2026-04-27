@@ -2,11 +2,11 @@
   var APP_KEY = "__buildSaverAllInOneV9";
   var app = window[APP_KEY] || (window[APP_KEY] = {});
 
-  if (app.version === "v19" && typeof app.remount === "function") {
+  if (app.version === "v20" && typeof app.remount === "function") {
     app.remount();
     return;
   }
-  app.version = "v19";
+  app.version = "v20";
 
   var CONFIG = {
     ga4: {
@@ -78,6 +78,12 @@
         "https://www.google.com",
         "https://www.gstatic.com"
       ]
+    },
+    mobileRail: {
+      enabled: true,
+      maxWidthPx: 900,
+      revealAfterScrollPx: 42,
+      bottomOffsetPx: 8
     },
     quoteConversion: {
       returnParam: "bsv_quote_submitted",
@@ -928,6 +934,16 @@
     };
   }
 
+  function getMobileRailConfig() {
+    var cfg = CONFIG.mobileRail || {};
+    return {
+      enabled: cfg.enabled !== false,
+      maxWidthPx: clamp(Number(cfg.maxWidthPx) || 900, 480, 1400),
+      revealAfterScrollPx: clamp(Number(cfg.revealAfterScrollPx) || 42, 1, 600),
+      bottomOffsetPx: clamp(Number(cfg.bottomOffsetPx) || 8, 0, 40)
+    };
+  }
+
   function clearDeferredTasks() {
     var tasks = Array.isArray(app.deferredTasks) ? app.deferredTasks : [];
     tasks.forEach(function (task) {
@@ -1532,7 +1548,7 @@
       else if (trigger.closest("#" + IDS.faq)) source = "FAQ";
       else if (trigger.closest("#" + IDS.trust)) source = "Trust Strip";
       else if (trigger.closest("#" + IDS.mostRequested)) source = "Most Requested";
-      else if (trigger.closest("#" + IDS.mobile)) source = "Mobile Bar";
+      else if (trigger.closest("#" + IDS.mobile)) source = "Mobile Rail";
       else if (trigger.closest("#" + IDS.proof)) source = "Reviews";
       else source = "Website";
     }
@@ -1547,6 +1563,10 @@
 
   function cleanup() {
     clearDeferredTasks();
+    if (typeof app.mobileRailCleanup === "function") {
+      app.mobileRailCleanup();
+      app.mobileRailCleanup = null;
+    }
 
     var ids = [IDS.style, IDS.finder, IDS.trust, IDS.mostRequested, IDS.estimator, IDS.cats, IDS.serviceAreas, IDS.faq, IDS.faqJson, IDS.localSchema, IDS.proof, IDS.mobile, IDS.drawerRoot, IDS.desktopRail, IDS.exitNudge].concat(LEGACY_IDS);
     ids.forEach(function (id) {
@@ -1655,11 +1675,12 @@
       '#bsv-proof-meta{margin-top:8px;color:#5a6f82;font:600 12px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
       '.bsv-proof-cta{margin-top:10px;border:none;border-radius:10px;padding:10px 14px;background:#f97316;color:#fff;cursor:pointer;font:800 14px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}' +
       '.bsv-proof-cta:hover{background:#ea580c;}' +
-      '#bsv-aio-mobile{position:fixed;left:10px;right:10px;bottom:calc(env(safe-area-inset-bottom,0px) + 8px);z-index:10020;display:none;grid-template-columns:1fr 1fr 1fr;gap:8px;padding:8px;border:1px solid #d8e4ef;border-radius:14px;background:rgba(255,255,255,.96);backdrop-filter:blur(8px);box-shadow:0 14px 34px rgba(16,38,60,.2);}' +
+      '#bsv-aio-mobile{position:fixed;left:10px;right:10px;bottom:calc(var(--bsv-mobile-bottom,8px) + env(safe-area-inset-bottom,0px));z-index:10020;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding:8px;border:1px solid #d8e4ef;border-radius:14px;background:rgba(255,255,255,.96);backdrop-filter:blur(8px);box-shadow:0 14px 34px rgba(16,38,60,.2);opacity:0;visibility:hidden;pointer-events:none;transform:translateY(16px);transition:opacity .22s ease,transform .22s ease,visibility .22s ease;}' +
+      '#bsv-aio-mobile.is-visible{opacity:1;visibility:visible;pointer-events:auto;transform:translateY(0);}' +
       '.bsv-aio-mb{min-height:42px;border-radius:10px;border:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font:800 13px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-decoration:none;}' +
       '.bsv-aio-mb-call{background:#0f3557;color:#fff;}' +
       '.bsv-aio-mb-quote{background:#f97316;color:#fff;}' +
-      '.bsv-aio-mb-find{background:#edf4fb;color:#12314d;}' +
+      '.bsv-aio-mb-upload{background:#edf4fb;color:#12314d;}' +
       '#bsv-drail-root{position:fixed;right:16px;top:50%;transform:translateY(-50%);z-index:10018;}' +
       '#bsv-drail{width:180px;display:flex;flex-direction:column;gap:8px;padding:10px;border:1px solid #d7e3ee;border-radius:14px;background:#fff;box-shadow:0 16px 36px rgba(16,38,60,.20);}' +
       '.bsv-drail-label{font:800 11px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#5a6f82;margin:2px 2px 4px;}' +
@@ -1732,7 +1753,8 @@
       '#bsv-qd-frame{width:100%;height:100%;border:0;}' +
       '@media (max-width:980px){#bsv-aio-trust{grid-template-columns:1fr 1fr;}.bsv-est-grid{grid-template-columns:1fr 1fr;}.bsv-est-calc{grid-column:1/-1;}}' +
       '@media (max-width:1100px){#bsv-drail-root{display:none;}}' +
-      '@media (max-width:900px){#bsv-aio-mobile{display:grid;}html.bsv-aio-mobile-pad body{padding-bottom:calc(86px + env(safe-area-inset-bottom,0px))!important;}#bsv-aio-faq{grid-template-columns:1fr;}}' +
+      '@media (max-width:900px){html.bsv-aio-mobile-pad body{padding-bottom:calc(86px + env(safe-area-inset-bottom,0px))!important;}#bsv-aio-faq{grid-template-columns:1fr;}}' +
+      '@media (min-width:901px){#bsv-aio-mobile{display:none!important;}}' +
       '@media (max-width:640px){#bsv-aio-fab{right:12px;bottom:12px;padding:11px 14px;font-size:13px;}#bsv-aio-title{font-size:19px;}#bsv-aio-results{grid-template-columns:1fr;}#bsv-aio-trust{grid-template-columns:1fr;}#bsv-qd-title{font-size:16px;}#bsv-exit-title{font-size:19px;}#bsv-exit-actions{grid-template-columns:1fr;}.bsv-mr-chip{padding:8px 10px;font-size:12px;}.bsv-est-grid{grid-template-columns:1fr;}.bsv-est-calc,.bsv-est-quote{width:100%;}.bsv-est-actions{flex-direction:column;align-items:stretch;}.bsv-est-hint{display:block;}#bsv-qd-urg-row{flex-direction:column;align-items:stretch;}#bsv-qd-priority{width:100%;}}';
 
     var style = document.createElement("style");
@@ -2911,25 +2933,73 @@
   }
 
   function mountMobile() {
+    var cfg = getMobileRailConfig();
+    if (!cfg.enabled) return;
+
     var nav = document.createElement("nav");
     nav.id = IDS.mobile;
     nav.setAttribute("aria-label", "Quick actions");
+    nav.setAttribute("aria-hidden", "true");
+    nav.style.setProperty("--bsv-mobile-bottom", String(cfg.bottomOffsetPx) + "px");
 
     nav.innerHTML = [
-      '<a class="bsv-aio-mb bsv-aio-mb-call" href="' + esc(callUrl()) + '">Call</a>',
-      '<button class="bsv-aio-mb bsv-aio-mb-quote" type="button" data-open-quote-drawer="1" data-source="Mobile Bar">Quote</button>',
-      '<button class="bsv-aio-mb bsv-aio-mb-find" id="bsv-aio-mobile-find" type="button">Catalog</button>'
+      '<a class="bsv-aio-mb bsv-aio-mb-call" href="' + esc(callUrl()) + '">Call Sales</a>',
+      '<button class="bsv-aio-mb bsv-aio-mb-quote" type="button" data-open-quote-drawer="1" data-source="Mobile Rail">Get Quote</button>',
+      '<button class="bsv-aio-mb bsv-aio-mb-upload" type="button" data-open-quote-drawer="1" data-source="Mobile Rail Upload" data-product="Takeoff / Material List" data-quote-upload="1">Upload Takeoff</button>'
     ].join("");
 
     document.body.appendChild(nav);
-    document.documentElement.classList.add("bsv-aio-mobile-pad");
 
-    var mobileFind = q("#bsv-aio-mobile-find", nav);
-    if (mobileFind) {
-      mobileFind.addEventListener("click", function () {
-        if (typeof app.openFinder === "function") app.openFinder("", "Mobile Bar");
-      });
+    var revealed = false;
+
+    function isMobileViewport() {
+      if (window.matchMedia) return window.matchMedia("(max-width:" + cfg.maxWidthPx + "px)").matches;
+      return (window.innerWidth || 0) <= cfg.maxWidthPx;
     }
+
+    function reveal() {
+      if (revealed) return;
+      revealed = true;
+      nav.classList.add("is-visible");
+      nav.setAttribute("aria-hidden", "false");
+      document.documentElement.classList.add("bsv-aio-mobile-pad");
+      trackEvent("bs_mobile_rail_revealed", { source: "Mobile Rail", threshold_px: cfg.revealAfterScrollPx });
+    }
+
+    function hide() {
+      nav.classList.remove("is-visible");
+      nav.setAttribute("aria-hidden", "true");
+      document.documentElement.classList.remove("bsv-aio-mobile-pad");
+    }
+
+    function updateRailState() {
+      if (!isMobileViewport()) {
+        hide();
+        return;
+      }
+
+      if (revealed) {
+        nav.classList.add("is-visible");
+        nav.setAttribute("aria-hidden", "false");
+        document.documentElement.classList.add("bsv-aio-mobile-pad");
+        return;
+      }
+
+      var y = window.pageYOffset || document.documentElement.scrollTop || 0;
+      if (y >= cfg.revealAfterScrollPx) reveal();
+      else hide();
+    }
+
+    window.addEventListener("scroll", updateRailState, { passive: true });
+    window.addEventListener("resize", updateRailState);
+    window.addEventListener("orientationchange", updateRailState);
+    updateRailState();
+
+    app.mobileRailCleanup = function () {
+      window.removeEventListener("scroll", updateRailState);
+      window.removeEventListener("resize", updateRailState);
+      window.removeEventListener("orientationchange", updateRailState);
+    };
   }
 
   function mountDesktopRail() {
@@ -3092,6 +3162,16 @@
         e.preventDefault();
         app.quoteContext = inferContext(quoteTrigger);
         if (typeof app.openDrawer === "function") app.openDrawer();
+        if (quoteTrigger.getAttribute("data-quote-upload") === "1") {
+          setTimeout(function () {
+            var uploadWrap = q("#bsv-qd-upload");
+            var uploadInput = q("#bsv-qd-files");
+            if (uploadWrap && typeof uploadWrap.scrollIntoView === "function") {
+              uploadWrap.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+            if (uploadInput && typeof uploadInput.focus === "function") uploadInput.focus();
+          }, 130);
+        }
         return;
       }
 
@@ -3183,5 +3263,5 @@
   }
 })();
 /* BuildSaver deploy metadata */
-window.__BUILDSAVER_DEPLOY_BUILD_AT = "2026-04-27T03:58:26Z";
-window.__BUILDSAVER_DEPLOY_SOURCE_SHA = "f8f13511e8e137237c0ec13ffae897273af743bd";
+window.__BUILDSAVER_DEPLOY_BUILD_AT = "2026-04-27T04:34:58Z";
+window.__BUILDSAVER_DEPLOY_SOURCE_SHA = "bd7eeb03d681c4ec347b84ebb8547c415b984b79";
